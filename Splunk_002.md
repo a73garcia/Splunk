@@ -119,23 +119,47 @@ index="siem-cisco" signature="accepted"
 
 ### 6.1 Filtrados de red
 ```spl
-index="siem-eu-mta" src="180.205.32.105"          /* IP exacta */
-index="siem-eu-mta" src="192.168.1.0/24"          /* rango CIDR */
-index="siem-eu-mta" (src="x.x.x.x" OR src="y.y.y.y")
-index="siem-eu-mta" NOT src="10.*" NOT src="192.168.*"  /* públicas */
+index="siem-eu-mta" src="180.205.32.105"                 /* IP exacta */
+index="siem-eu-mta" src="192.168.1.0/24"                 /* rango CIDR */
+index="siem-eu-mta" (src="x.x.x.x" OR src="y.y.y.y").    /* varias IPs */
+index="siem-eu-mta" NOT src="10.*" NOT src="192.168.*"   /* públicas */
 ```
 
 ### 6.2 Estadísticas de red
+
+Top IP origen
 ```spl
-index="siem-eu-mta" | stats count BY src | sort - count | head 20
-index="siem-eu-mta" | stats count BY dest | sort - count | head 20
-index="siem-eu-mta" | stats count BY host | sort - count
+index="siem-eu-mta"
+   | stats count BY src
+   | sort - count
+   | head 20
+```
+
+Top IP destino
+```spl
+index="siem-eu-mta"
+   | stats count BY dest
+   | sort - count
+   | head 20
+```
+
+carga por host
+```spl
+index="siem-eu-mta"
+   | stats count BY host
+   | sort - count
 ```
 
 ### 6.3 Visualización de tráfico
+
 ```spl
-index="siem-eu-mta" | timechart span=15m count BY src limit=10
-index="siem-eu-mta" | table _time src dest suser duser host
+index="siem-eu-mta"
+   | timechart span=15m count BY src limit=10
+```
+
+```spl
+index="siem-eu-mta"
+   | table _time src dest suser duser host
 ```
 
 ### 6.4 Reputación y anomalías
