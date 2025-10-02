@@ -28,8 +28,7 @@
 
 ---
 
-<details>
-<summary>⚡ Búsquedas Básicas</summary>
+## ⚡ Búsquedas Básicas
 
 ```spl
 index="siem-eu-mta"                              # todo en el índice
@@ -37,12 +36,10 @@ index="siem-eu-mta" suser="usuario@dominio.com"  # por remitente
 index="siem-eu-mta" duser="destino@dominio.com"  # por destinatario
 index="siem-eu-mta" earliest=-24h latest=now     # últimas 24h
 ```
-</details>
 
 ---
 
-<details>
-<summary>📌 Campos Útiles</summary>
+## 📌 Campos Útiles
 
 - `suser` → remitente  
 - `duser` → destinatario  
@@ -52,12 +49,10 @@ index="siem-eu-mta" earliest=-24h latest=now     # últimas 24h
 - `signature` → estado (accepted/rejected)  
 - `ESAOFVerdict` → veredicto (NEGATIVE, SKIPPED…)  
 - `src`, `dest` → IPs  
-</details>
 
 ---
 
-<details>
-<summary>📋 Tablas Personalizadas</summary>
+## 📋 Tablas Personalizadas
 
 ```spl
 index="siem-eu-mta"
@@ -72,24 +67,20 @@ Separar fecha en día y hora:
 | eval Dia=strftime(start_ts,"%Y-%m-%d"), Hora=strftime(start_ts,"%H:%M:%S")
 | table Dia Hora MID suser duser host
 ```
-</details>
 
 ---
 
-<details>
-<summary>📊 Estadísticas y Conteos</summary>
+## 📊 Estadísticas y Conteos
 
 ```spl
 | stats count BY suser | sort - count
 | rex field=suser "@(?<domain>[^> ]+)$" | stats count BY domain | sort - count
 | timechart span=1h count
 ```
-</details>
 
 ---
 
-<details>
-<summary>🔎 Filtrados Avanzados</summary>
+## 🔎 Filtrados Avanzados
 
 ```spl
 signature="rejected"    # rechazados
@@ -97,12 +88,10 @@ signature="accepted"    # aceptados
 ESAOFVerdict="NEGATIVE" # veredicto negativo
 host="CIOBI301926B"     # por host ESA
 ```
-</details>
 
 ---
 
-<details>
-<summary>🧪 Ejemplos Prácticos</summary>
+## 🧪 Ejemplos Prácticos
 
 Ver MIDs de un remitente:
 
@@ -121,12 +110,10 @@ Flujo de correos aceptados por hora:
 ```spl
 signature="accepted" | timechart span=1h count
 ```
-</details>
 
 ---
 
-<details>
-<summary>🌐 Opciones de Red</summary>
+## 🌐 Opciones de Red
 
 Filtrados de red:
 
@@ -150,24 +137,20 @@ Visualización:
 ```spl
 | stats count BY src host | xyseries src host count
 ```
-</details>
 
 ---
 
-<details>
-<summary>🏷️ Extracción de Dominios</summary>
+## 🏷️ Extracción de Dominios
 
 ```spl
 | rex field=suser "@(?<sender_domain>[^> ]+)$" | stats count BY sender_domain
 | rex field=duser "@(?<recipient_domain>[^> ]+)$" | stats count BY recipient_domain
 | rex field=suser "@(?<domain>[^> ]+)$" | stats count BY domain | sort - count | head 10
 ```
-</details>
 
 ---
 
-<details>
-<summary>🕒 Manejo de Fechas y Tiempos</summary>
+## 🕒 Manejo de Fechas y Tiempos
 
 ```spl
 | eval start_ts=strptime(start,"%a %b %e %H:%M:%S %Y")
@@ -175,12 +158,10 @@ Visualización:
 | stats count BY Mes | sort Mes
 | eval Hora=strftime(start_ts,"%H") | stats count BY Hora | sort Hora
 ```
-</details>
 
 ---
 
-<details>
-<summary>🚀 Consultas Avanzadas</summary>
+## 🚀 Consultas Avanzadas
 
 ### Normalización y extracción
 ```spl
@@ -199,12 +180,10 @@ Visualización:
 | streamstats window=30 avg(c) AS avg30 stdev(c) AS sd30
 | eval z=if(sd30>0,(c-avg30)/sd30,null())
 ```
-</details>
 
 ---
 
-<details>
-<summary>📈 Estadísticas Avanzadas y KPIs</summary>
+## 📈 Estadísticas Avanzadas y KPIs
 
 ```spl
 | rex field=suser "@(?<domain>[^> ]+)$"
@@ -224,12 +203,10 @@ Top remitentes con bucket “otros”:
 | stats count BY suser | sort - count | head 9
 | appendpipe [ stats sum(count) AS count | eval suser="otros" ]
 ```
-</details>
 
 ---
 
-<details>
-<summary>📧 Casos Especiales: correos sin adjuntos > 2 MB</summary>
+## 📧 Casos Especiales: correos sin adjuntos > 2 MB
 
 ```spl
 | eval size_bytes=coalesce(msg_size,message_size,bytes)
@@ -244,22 +221,18 @@ Alternativa con regex en `_raw`:
 | eval attachment_count=mvcount(match)
 | where attachment_count=0
 ```
-</details>
 
 ---
 
-<details>
-<summary>💾 Guardar Búsquedas y Alertas</summary>
+## 💾 Guardar Búsquedas y Alertas
 
 1. Ejecutar búsqueda  
 2. **Save As → Report / Alert**  
 3. Configurar permisos y condiciones  
-</details>
 
 ---
 
-<details>
-<summary>🛠️ Macros y Buenas Prácticas</summary>
+## 🛠️ Macros y Buenas Prácticas
 
 - Prefiere `stats` sobre `transaction` en grandes volúmenes.  
 - Usa `timechart` con `limit` y `useother=t`.  
@@ -274,4 +247,4 @@ Macros:
 `extraer_dominio(field,out)` → rex field=$field$ "@(?<$out$>[^> ]+)$"
 `solo_publicas(field)` → NOT $field$="10.*" NOT $field$="192.168.*"
 ```
-</details>
+
