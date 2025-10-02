@@ -172,6 +172,12 @@ index="siem-cisco"
    | sort - ratio_rechazo
 ```
 
+```spl
+index="siem-cisco" NOT src="10.*" NOT src="192.168.*"            # solo públicas
+   | stats dc(duser) AS destinatarios count BY src               # spray detection
+```
+
+
 ---
 
 ## 7. Extracción de dominios
