@@ -1,39 +1,5 @@
-# 📖 Guía de Búsquedas en Splunk (Cisco ESA / Correo + Red)
+# 📖 Guía de Búsquedas en Splunk
 
-Esta guía recopila ejemplos prácticos de búsquedas, filtrados, visualizaciones y **estadísticas avanzadas** en Splunk para logs de Cisco ESA (correo) y señales de red.
-
----
-
-## 📚 Tabla de contenidos
-- [0. Cómo usar esta guía](#0-cómo-usar-esta-guía)
-- [1. Búsquedas básicas](#1-búsquedas-básicas)
-- [2. Campos útiles](#2-campos-útiles)
-- [3. Tablas personalizadas](#3-tablas-personalizadas)
-- [4. Estadísticas y conteos (básico)](#4-estadísticas-y-conteos-básico)
-- [5. Filtrados avanzados](#5-filtrados-avanzados)
-- [6. Opciones de red](#6-opciones-de-red)
-  - [6.1 Filtrados de red](#61-filtrados-de-red)
-  - [6.2 Estadísticas de red](#62-estadísticas-de-red)
-  - [6.3 Visualización de tráfico](#63-visualización-de-tráfico)
-  - [6.4 Reputación y anomalías](#64-reputación-y-anomalías)
-- [7. Extracción de dominios](#7-extracción-de-dominios)
-- [8. Manejo de fechas y tiempos](#8-manejo-de-fechas-y-tiempos)
-- [9. Consultas avanzadas](#9-consultas-avanzadas)
-  - [9.1 Normalización y extracción](#91-normalización-y-extracción)
-  - [9.2 Correlación por MID (transaction)](#92-correlación-por-mid-transaction)
-  - [9.3 Ventanas móviles y rachas (streamstats)](#93-ventanas-móviles-y-rachas-streamstats)
-  - [9.4 Detección de picos y outliers](#94-detección-de-picos-y-outliers)
-  - [9.5 Distintos y cardinalidad](#95-distintos-y-cardinalidad)
-  - [9.6 Enriquecimiento (GeoIP/ASN/IOC)](#96-enriquecimiento-geoipasnioc)
-  - [9.7 Uniones/Lookups y tablas maestras](#97-unioneslookups-y-tablas-maestras)
-- [10. Estadísticas avanzadas y KPIs](#10-estadísticas-avanzadas-y-kpis)
-  - [10.1 Ratios y tasas](#101-ratios-y-tasas)
-  - [10.2 Percentiles y tamaños](#102-percentiles-y-tamaños)
-  - [10.3 Series temporales multi-split](#103-series-temporales-multi-split)
-  - [10.4 Heatmaps y matrices](#104-heatmaps-y-matrices)
-  - [10.5 Top N con “otros”](#105-top-n-con-otros)
-- [11. Guardar búsquedas / permisos](#11-guardar-búsquedas--permisos)
-- [12. Anexos: macros y buenas prácticas](#12-anexos-macros-y-buenas-prácticas)
 
 ---
 
