@@ -90,19 +90,19 @@ index="siem-eu-mta" host="CIOBI301926B"        /* por host ESA */
 
 Ver MIDs de un remitente:
 ```spl
-| table _time internal_message_id duser signature
+   | table _time internal_message_id duser signature
 ```
 
 Top remitentes sospechosos:
 ```spl
-| stats count BY suser
+   | stats count BY suser
    | sort - count
    | head 10
 ```
 
 Flujo de correos aceptados por hora:
 ```spl
-signature="accepted"
+index="siem-cisco" signature="accepted"
    | timechart span=1h count
 ```
 
