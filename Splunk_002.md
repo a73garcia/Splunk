@@ -41,10 +41,10 @@ index="siem-cisco"
 
 Separar fecha en día y hora (ISO ordenable):
 ```spl
-...
-| eval start_ts=strptime(start,"%a %b %e %H:%M:%S %Y")
-| eval Dia=strftime(start_ts,"%Y-%m-%d"), Hora=strftime(start_ts,"%H:%M:%S")
-| table Dia Hora MID suser duser host
+index="siem-cisco"
+   | eval start_ts=strptime(start,"%a %b %e %H:%M:%S %Y")
+   | eval Dia=strftime(start_ts,"%Y-%m-%d"), Hora=strftime(start_ts,"%H:%M:%S")
+   | table Dia Hora MID suser duser host
 ```
 
 ---
@@ -90,11 +90,13 @@ index="siem-eu-mta" host="CIOBI301926B"        /* por host ESA */
 
 Ver MIDs de un remitente:
 ```spl
+index="siem-cisco"
    | table _time internal_message_id duser signature
 ```
 
 Top remitentes sospechosos:
 ```spl
+index="siem-cisco"
    | stats count BY suser
    | sort - count
    | head 10
