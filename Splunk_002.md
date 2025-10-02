@@ -86,6 +86,33 @@ index="siem-eu-mta" host="CIOBI301926B"        /* por host ESA */
 
 ---
 
+## 6. Ejemplos prácticos
+
+Ver MIDs de un remitente:
+```spl
+| table _time internal_message_id duser signature
+```
+
+Top remitentes sospechosos:
+```spl
+| stats count BY suser
+   | sort - count
+   | head 10
+```
+
+Flujo de correos aceptados por hora:
+```spl
+signature="accepted"
+   | timechart span=1h count
+```
+
+---
+
+
+
+
+
+
 ## 6. Opciones de red
 
 ### 6.1 Filtrados de red
