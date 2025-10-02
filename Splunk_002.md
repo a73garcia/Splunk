@@ -12,10 +12,10 @@
 
 ## 1. Búsquedas básicas
 ```spl
-index="siem-eu-mta"                              /* todo en el índice */
-index="siem-eu-mta" suser="usuario@dominio.com"  /* remitente */
-index="siem-eu-mta" duser="destino@dominio.com"  /* destinatario */
-index="siem-eu-mta" earliest=-24h latest=now     /* últimas 24h */
+index="siem-cisco"                              /* todo en el índice */
+index="siem-cisco" suser="usuario@dominio.com"  /* remitente */
+index="siem-cisco" duser="destino@dominio.com"  /* destinatario */
+index="siem-cisco" earliest=-24h latest=now     /* últimas 24h */
 ```
 
 ---
@@ -34,14 +34,15 @@ index="siem-eu-mta" earliest=-24h latest=now     /* últimas 24h */
 
 ## 3. Tablas personalizadas
 ```spl
-index="siem-eu-mta"
+index="siem-cisco"
 | rename suser AS Sender, duser AS Recipient, internal_message_id AS MID
 | table MID Sender Recipient host
 ```
 
 Separar fecha en día y hora (ISO ordenable):
 ```spl
-... | eval start_ts=strptime(start,"%a %b %e %H:%M:%S %Y")
+...
+| eval start_ts=strptime(start,"%a %b %e %H:%M:%S %Y")
 | eval Dia=strftime(start_ts,"%Y-%m-%d"), Hora=strftime(start_ts,"%H:%M:%S")
 | table Dia Hora MID suser duser host
 ```
@@ -49,10 +50,22 @@ Separar fecha en día y hora (ISO ordenable):
 ---
 
 ## 4. Estadísticas y conteos (básico)
+
 ```spl
-index="siem-eu-mta" | stats count BY suser | sort - count
-index="siem-eu-mta" | rex field=suser "@(?<domain>[^> ]+)$" | stats count BY domain | sort - count
-index="siem-eu-mta" | timechart span=1h count
+index="siem-cisco"
+    | stats count BY suser
+    | sort - count
+```
+
+```spl
+index="siem-cisco"
+   | rex field=suser "@(?<domain>[^> ]+)$"
+   | stats count BY domain | sort - count
+```
+
+```spl
+index="siem-cisco"
+   | timechart span=1h count
 ```
 
 ---
