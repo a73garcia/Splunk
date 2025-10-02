@@ -110,26 +110,21 @@ index="siem-cisco" signature="accepted"
 
 ---
 
-
-
-
-
-
 ## 6. Opciones de red
 
 ### 6.1 Filtrados de red
 ```spl
-index="siem-eu-mta" src="180.205.32.105"                 /* IP exacta */
-index="siem-eu-mta" src="192.168.1.0/24"                 /* rango CIDR */
-index="siem-eu-mta" (src="x.x.x.x" OR src="y.y.y.y").    /* varias IPs */
-index="siem-eu-mta" NOT src="10.*" NOT src="192.168.*"   /* públicas */
+index="siem-cisco" src="180.205.32.105"                 /* IP exacta */
+index="siem-cisco" src="192.168.1.0/24"                 /* rango CIDR */
+index="siem-cisco" (src="x.x.x.x" OR src="y.y.y.y").    /* varias IPs */
+index="siem-cisco" NOT src="10.*" NOT src="192.168.*"   /* públicas */
 ```
 
 ### 6.2 Estadísticas de red
 
 Top IP origen
 ```spl
-index="siem-eu-mta"
+index="siem-cisco"
    | stats count BY src
    | sort - count
    | head 20
@@ -137,7 +132,7 @@ index="siem-eu-mta"
 
 Top IP destino
 ```spl
-index="siem-eu-mta"
+index="siem-cisco"
    | stats count BY dest
    | sort - count
    | head 20
@@ -145,7 +140,7 @@ index="siem-eu-mta"
 
 carga por host
 ```spl
-index="siem-eu-mta"
+index="siem-cisco"
    | stats count BY host
    | sort - count
 ```
@@ -153,28 +148,28 @@ index="siem-eu-mta"
 ### 6.3 Visualización de tráfico
 
 ```spl
-index="siem-eu-mta"
+index="siem-cisco"
    | timechart span=15m count BY src limit=10
 ```
 
 ```spl
-index="siem-eu-mta"
+index="siem-cisco"
    | table _time src dest suser duser host
 ```
 
 ### 6.4 Reputación y anomalías
 ```spl
-index="siem-eu-mta"
-| stats dc(duser) AS destinatarios count BY src
-| where destinatarios>50
-| sort - destinatarios
+index="siem-cisco"
+   | stats dc(duser) AS destinatarios count BY src
+   | where destinatarios>50
+   | sort - destinatarios
 ```
 ```spl
-index="siem-eu-mta"
-| stats sum(eval(signature="rejected")) AS rechazados count AS total BY src
-| eval ratio_rechazo=round(rechazados/total*100,2)
-| where total>=50 AND ratio_rechazo>=20
-| sort - ratio_rechazo
+index="siem-cisco"
+   | stats sum(eval(signature="rejected")) AS rechazados count AS total BY src
+   | eval ratio_rechazo=round(rechazados/total*100,2)
+   | where total>=50 AND ratio_rechazo>=20
+   | sort - ratio_rechazo
 ```
 
 ---
