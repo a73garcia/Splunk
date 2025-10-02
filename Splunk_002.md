@@ -4,9 +4,9 @@
 ---
 
 ## 0. Cómo usar esta guía
-- Sustituye `index="siem-eu-mta"` por tu índice real si aplica.
+- Sustituye `index="siem-cisco"` por tu índice real si aplica.
 - Si `start` viene como texto (`Wed Oct 1 14:45:43 2025`), conviértelo primero con `strptime` y formatea con `strftime`.
-- Campos habituales: `suser` (remitente), `duser` (destinatario), `internal_message_id` o `mid` (ID), `host` (ESA), `signature` (accepted/rejected), `ESA*` (veredictos/políticas), `src`/`dest` (red).
+- Campos habituales: `suser` (remitente), `duser` (destinatario), `internal_message_id` o `mid` (ID), `host` (ESA), `signature` (accepted/rejected), `src`/`dest` (red).
 
 ---
 
