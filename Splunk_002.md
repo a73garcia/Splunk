@@ -35,8 +35,8 @@ index="siem-cisco" earliest=-24h latest=now     /* últimas 24h */
 ## 3. Tablas personalizadas
 ```spl
 index="siem-cisco"
-| rename suser AS Sender, duser AS Recipient, internal_message_id AS MID
-| table MID Sender Recipient host
+   | rename suser AS Sender, duser AS Recipient, internal_message_id AS MID
+   | table MID Sender Recipient host
 ```
 
 Separar fecha en día y hora (ISO ordenable):
@@ -51,17 +51,23 @@ Separar fecha en día y hora (ISO ordenable):
 
 ## 4. Estadísticas y conteos (básico)
 
+Correos por remitente:
+
 ```spl
 index="siem-cisco"
     | stats count BY suser
     | sort - count
 ```
 
+Correos por dominio:
+
 ```spl
 index="siem-cisco"
    | rex field=suser "@(?<domain>[^> ]+)$"
    | stats count BY domain | sort - count
 ```
+
+Mensajes por horas:
 
 ```spl
 index="siem-cisco"
