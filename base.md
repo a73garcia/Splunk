@@ -162,3 +162,65 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 ```
 
 ---
+
+## Cuenta correos por entry log
+
+```spl
+    | eval TSP = if(like(signature,"%valor1%"), mid, null())
+    | eval RFC = if(like(signature,"%valor2%"), mid, null())
+    | eval NCDKIM = if(like(signature,"%valor3"), mid, null())
+    | stats dc(mid) AS Total_Correos 
+        dc(TSP) AS "valor1" 
+        dc(RFC) AS "valor2" 
+        dc(NCDKIM) AS "valor3" 
+    by CES
+    | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>',"commas"),".",","), '<<FIELD>>') ]
+```
+
+---
+
+## Busca correos en base al Sender y la act
+
+```spl
+    | stats values(host) as host 
+        values(HoraEntrada) as HoraEntrada 
+        values(Accion) as Accion 
+        values(MID) as MID 
+        values(Size(MB)) as Size(MB) 
+        values(Sender) as Sender 
+        values(Recipient) as Recipient
+    by suser, act
+```
+
+## Ver numero de los por nodos y tipo de syslogs
+
+```spl
+    | chart count over host by source
+    | addtotals
+```
+
+---
+
+## Correos dropeado y cuarentena
+
+```spl
+    | stats
+        count(MID) as Total
+        count(eval(QueueTime > 180)) as Encolados
+        count(eval(Status="DROPPED")) as Dropped
+        count(eval(Status="QUARANTINED")) as Quarantined
+        count(eval(Status="DELIVERED")) as Delivered
+      by Nodo
+```
+
+
+
+
+
+
+
+
+
+
+
+
