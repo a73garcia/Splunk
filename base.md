@@ -17,3 +17,50 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
     | eval Recipient = split(Recipient, ";")
     | eval Dia = strftime(HoraE, "%d/%m/%Y"), Entrada = strftime(HoraE, "%H:%M"), Salida = strftime(HoraS, "%H:%M"), QueueTime = round(HoraS - HoraE)
 ```
+---
+
+## Tabla de correos
+
+```spl
+    | fields CES Nodo MID Dia Entrada Salida Size(MB) dest_ip Domain Sender
+    | table CES Nodo MID Dia Entrada Salida Size(MB) dest_ip Domain Sender
+```
+
+---
+
+## Tabla con datos para encolamientos
+
+```spl
+    | fields CES Nodo MID Dia Entrada Salida Size(MB) IP_Pais QueueTime Politica Categoria Reputacion Status Domain Sender Recipient
+    | table CES Nodo MID Dia Entrada Salida Size(MB) IP_Pais QueueTime Politica Categoria Reputacion Status Domain Sender Recipient
+```
+
+---
+
+## Tabla con datos para encolamientos con SPF, DKIM, DMARC, Adjuntos
+
+```spl
+    | fields CES Nodo MID Dia Entrada Salida Size(MB) IP_Pais QueueTime Politica Categoria Reputacion Status Domain Sender Adjunto SPF DMARC DKIM Recipient
+    | table CES Nodo MID Dia Entrada Salida Size(MB) IP_Pais QueueTime Politica Categoria Reputacion Status Domain Sender Adjunto SPF DMARC DKIM Recipient
+```
+
+---
+
+## Grafica para ver correos que han tenido un procesamiento superior a 90 segundos…
+
+```spl
+    | eval esMayor90 = if(QueueTime > 90, 1, 0)
+    | timechart span=1m dc(MID) as CorreosProcesados, sum(esMayor90) as EventosMayor90
+```
+
+## Cuenta correos por sender
+
+```spl
+    | stats count by Sender
+```
+
+---
+
+
+
+
