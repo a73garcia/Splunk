@@ -30,7 +30,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Tabla con datos para encolamientos
 
-```python
+```sh
     | fields CES Nodo MID Dia Entrada Salida Size(MB) IP_Pais QueueTime Politica Categoria Reputacion Status Domain Sender Recipient
     | table CES Nodo MID Dia Entrada Salida Size(MB) IP_Pais QueueTime Politica Categoria Reputacion Status Domain Sender Recipient
 ```
@@ -39,7 +39,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Tabla con datos para encolamientos con SPF, DKIM, DMARC, Adjuntos
 
-```spl
+```sh
     | fields CES Nodo MID Dia Entrada Salida Size(MB) IP_Pais QueueTime Politica Categoria Reputacion Status Domain Sender Adjunto SPF DMARC DKIM Recipient
     | table CES Nodo MID Dia Entrada Salida Size(MB) IP_Pais QueueTime Politica Categoria Reputacion Status Domain Sender Adjunto SPF DMARC DKIM Recipient
 ```
@@ -48,7 +48,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Grafica para ver correos que han tenido un procesamiento a 90 segundos
 
-```spl
+```sh
     | eval esMayor90 = if(QueueTime > 90, 1, 0)
     | timechart span=1m sum(esMayor90) as EventosMayor90
 ```
@@ -57,7 +57,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Grafica para ver correos procesados y que han tenido un procesamiento superior a 60 segundos
 
-```spl
+```sh
     | eval esMayor60 = if(QueueTime > 60, 1, 0)
     | timechart span=1m dc(MID) as CorreosProcesados, sum(esMayor60) as EventosMayor60
 ```
@@ -66,7 +66,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Cuenta correos por sender
 
-```spl
+```sh
     | stats count by Sender
 ```
 
@@ -74,7 +74,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Cuenta correos por sender
 
-```spl
+```sh
     | stats count AS Correos by Sender
 ```
 
@@ -82,7 +82,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Número de correos enviados y ordenados de mayor a menor
 
-```spl
+```sh
     | stats count AS Correos by Sender
     | sort - Correos
     | head 20
@@ -92,7 +92,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Pone a los valores numéricos un separador de miles con "," en vez de "."
 
-```spl
+```sh
     | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
 ```
 
@@ -100,7 +100,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Cuenta correos por horas
 
-```spl
+```sh
     | bin _time span=1h
     | stats count AS Correos by _time
     | sort _time
@@ -109,7 +109,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Cuenta correos por horas, totales y sender seleccionados
 
-```spl
+```sh
     | bin _time span=1h
     | stats count AS Correos
         count(eval(user="correo1@mail.com")) AS "correo1@mail.com"
