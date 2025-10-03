@@ -473,7 +473,7 @@ index="siem-cisco"
 ### 12.5. Filtrar también imágenes inline (opcional)
 
 ```spl
-index="siem-eu-mta"
+index="siem-cisco"
    | eval size_bytes = coalesce(msg_size, message_size, bytes)
    | where size_bytes > 2097152
    | rex field=_raw "(?i)Content-ID:\s*<" 
@@ -517,7 +517,7 @@ index="siem-eu-mta"
 
 ### Macros útiles (ejemplos)
 
-- `` `idx_mta()` `` → `index="siem-eu-mta"`  
+- `` `idx_mta()` `` → `index="siem-cisco"`  
 - `` `solo_publicas(field)` `` → `NOT $field$="10.*" NOT $field$="192.168.*" NOT $field$="172.1[6-9].*" NOT $field$="172.2[0-9].*" NOT $field$="172.3[0-1].*"`  
 - `` `extraer_dominio(field,out)` `` → `rex field=$field$ "@(?<$out$>[^> ]+)$"`
 
