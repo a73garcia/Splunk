@@ -46,12 +46,23 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ---
 
-## Grafica para ver correos que han tenido un procesamiento superior a 90 segundos…
+## Grafica para ver correos que han tenido un procesamiento a 90 segundos
 
 ```spl
     | eval esMayor90 = if(QueueTime > 90, 1, 0)
-    | timechart span=1m dc(MID) as CorreosProcesados, sum(esMayor90) as EventosMayor90
+    | timechart span=1m sum(esMayor90) as EventosMayor90
 ```
+
+---
+
+## #Grafica para ver correos procesados y que han tenido un procesamiento superior a 60 segundos
+
+```spl
+    | eval esMayor60 = if(QueueTime > 60, 1, 0)
+    | timechart span=1m dc(MID) as CorreosProcesados, sum(esMayor60) as EventosMayor60
+```
+
+---
 
 ## Cuenta correos por sender
 
