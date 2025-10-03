@@ -55,7 +55,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ---
 
-## #Grafica para ver correos procesados y que han tenido un procesamiento superior a 60 segundos
+## Grafica para ver correos procesados y que han tenido un procesamiento superior a 60 segundos
 
 ```spl
     | eval esMayor60 = if(QueueTime > 60, 1, 0)
