@@ -21,7 +21,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Tabla de correos
 
-```sh
+```sql
     | fields CES Nodo MID Dia Entrada Salida Size(MB) dest_ip Domain Sender
     | table CES Nodo MID Dia Entrada Salida Size(MB) dest_ip Domain Sender
 ```
