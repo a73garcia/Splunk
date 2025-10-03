@@ -270,7 +270,7 @@ Resumen de acciones realizadas sobre los correos (Delivered, Dropped, Quarantine
     | addcoltotals
 ```
 
-## Busqueda de correos enviado por CES APP por Dominio de Sender
+## Busqueda de correos enviado por Cluster por Dominio de Sender
 
 Cuenta correos enviados por cada política (cs1), agrupando por dominio del remitente.
 
