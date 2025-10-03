@@ -30,7 +30,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Tabla con datos para encolamientos
 
-```sh
+```sql
     | fields CES Nodo MID Dia Entrada Salida Size(MB) IP_Pais QueueTime Politica Categoria Reputacion Status Domain Sender Recipient
     | table CES Nodo MID Dia Entrada Salida Size(MB) IP_Pais QueueTime Politica Categoria Reputacion Status Domain Sender Recipient
 ```
@@ -39,7 +39,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Tabla con datos para encolamientos con SPF, DKIM, DMARC, Adjuntos
 
-```sh
+```sql
     | fields CES Nodo MID Dia Entrada Salida Size(MB) IP_Pais QueueTime Politica Categoria Reputacion Status Domain Sender Adjunto SPF DMARC DKIM Recipient
     | table CES Nodo MID Dia Entrada Salida Size(MB) IP_Pais QueueTime Politica Categoria Reputacion Status Domain Sender Adjunto SPF DMARC DKIM Recipient
 ```
@@ -48,7 +48,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Grafica para ver correos que han tenido un procesamiento a 90 segundos
 
-```py
+```sql
     | eval esMayor90 = if(QueueTime > 90, 1, 0)
     | timechart span=1m sum(esMayor90) as EventosMayor90
 ```
@@ -57,7 +57,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Grafica para ver correos procesados y que han tenido un procesamiento superior a 60 segundo
 
-```py
+```sql
     | eval esMayor60 = if(QueueTime > 60, 1, 0)
     | timechart span=1m dc(MID) as CorreosProcesados, sum(esMayor60) as EventosMayor60
 ```
@@ -66,7 +66,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Cuenta correos por sender
 
-```py
+```sql
     | stats count by Sender
 ```
 
@@ -74,7 +74,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Cuenta correos por sender
 
-```py
+```sql
     | stats count AS Correos by Sender
 ```
 
@@ -82,7 +82,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Número de correos enviados y ordenados de mayor a menor
 
-```py
+```sql
     | stats count AS Correos by Sender
     | sort - Correos
     | head 20
@@ -92,7 +92,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Pone a los valores numéricos un separador de miles con "," en vez de "."
 
-```py
+```sql
     | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
 ```
 
@@ -100,7 +100,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Cuenta correos por horas
 
-```py
+```sql
     | bin _time span=1h
     | stats count AS Correos by _time
     | sort _time
@@ -109,7 +109,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Cuenta correos por horas, totales y sender seleccionados
 
-```py
+```sql
     | bin _time span=1h
     | stats count AS Correos
         count(eval(user="correo1@mail.com")) AS "correo1@mail.com"
@@ -129,7 +129,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Correos encolamientos
 
-```py
+```sql
     | eval QueueRange = case(
         QueueTime < 60, "1. Menos de 1 min",
         QueueTime >= 60 AND QueueTime < 180, "2. Hasta 3 min",
@@ -145,7 +145,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Numero correos por senders indicado
 
-```py
+```sql
     | bin _time span=1h
     | stats count AS Correos
         count(eval(user="correo1@mail.com")) AS "correo1@mail.com"
@@ -165,7 +165,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Cuenta correos por entry log
 
-```py
+```sql
     | eval OPC1 = if(like(signature,"%valor1%"), mid, null())
     | eval OPC2 = if(like(signature,"%valor2%"), mid, null())
     | eval OPC3 = if(like(signature,"%valor3"), mid, null())
@@ -181,7 +181,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Busca correos en base al Sender y la act
 
-```py
+```sql
     | stats values(host) as host 
         values(HoraEntrada) as HoraEntrada 
         values(Accion) as Accion 
@@ -194,7 +194,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Ver numero de los por nodos y tipo de syslogs
 
-```py
+```sql
     | chart count over host by source
     | addtotals
 ```
@@ -203,7 +203,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Correos dropeado y cuarentena
 
-```py
+```sql
     | stats
         count(MID) as Total
         count(eval(QueueTime > 180)) as Encolados
@@ -240,7 +240,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Cuenta correos por estado
 
-```spl
+```sql
     | stats values(act) AS Estado count by act, duser
     | addcoltotals
 ```
@@ -249,7 +249,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Busqueda de correos enviado por CES APP por Dominio de Sender
 
-```spl
+```sql
     | eval HoraE = strptime(start, "%a %b %d %H:%M:%S %Y"), HoraS = strptime(end, "%a %b %d %H:%M:%S %Y"), 
         HostRaw = mvindex(split(host, "."), 0), SPF = mvindex(split(SPF_verdict, ","), 5), 
         ESA_Num = tonumber(replace(HostRaw, "esa-", "")), Nodo = printf("ESA%02d", ESA_Num), 
@@ -270,7 +270,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## TLS
 
-```spl
+```sql
 index=siem-cisco sourcetype="cisco:esa:cef" (ESATLSInProtocol="TLSv1.1" OR ESATLSOutProtocol="TLSv1.1" OR ESATLSOutProtocol="TLSv1.2") suser="*" duser="*" act="*"
     | rex field=suser "@(?<Origen>[^>]+)"
     | rex field=duser "@(?<Destino>[^>]+)"
@@ -282,7 +282,7 @@ index=siem-cisco sourcetype="cisco:esa:cef" (ESATLSInProtocol="TLSv1.1" OR ESATL
 
 ## Correos por política
 
-```spl
+```sql
     | rename cs1 AS Politica
     | stats count by Politica
     | addcoltotals
@@ -295,7 +295,7 @@ index=siem-cisco sourcetype="cisco:esa:cef" (ESATLSInProtocol="TLSv1.1" OR ESATL
 
 ## Cuenta por política en meses (filas)
 
-```spl
+```sql
     | rename cs1 AS Politica
     | bin _time span=1mon
     | eval Mes=strftime(_time,"%m/%Y")
@@ -311,7 +311,7 @@ index=siem-cisco sourcetype="cisco:esa:cef" (ESATLSInProtocol="TLSv1.1" OR ESATL
 
 ## Cuenta por política en meses (columnas)
 
-```spl
+```sql
     | rename cs1 AS Politica
     | bin _time span=1mon
     | eval Mes=strftime(_time,"%Y-%m")
@@ -326,7 +326,7 @@ index=siem-cisco sourcetype="cisco:esa:cef" (ESATLSInProtocol="TLSv1.1" OR ESATL
 
 ## Busqueda MailX
 
-```spl
+```sql
 index="siem-cisco" suser="*" duser="*" start="*" event_class_id="ESA_CONSOLIDATED_LOG_EVENT"
     | eval start_ts = strptime(start, "%a %b %e %H:%M:%S %Y")
     | eval Dia = strftime(start_ts, "%d/%m/%Y"), Hora = strftime(start_ts, "%H:%M")
@@ -346,7 +346,7 @@ index="siem-cisco" suser="*" duser="*" start="*" event_class_id="ESA_CONSOLIDATE
 
 ## Correos entrantes sin adjuntos y con mas de 2MB de peso
 
-```spl
+```sql
 index=siem-cisco (host=*.maquina.grupo1.com OR host=*.maquina.grupo2.com OR host=*.maquina.grupo3.com) cef_6_header="Consolidated Log Event" user="*" suser!="bounce" cs1="*_IN"
     | where ESAMsgSize > 2097152
     | where (ESAAttachmentDetails=0 OR isnull(ESAAttachmentDetails)) OR ESAAttachmentDetails!=0
@@ -372,7 +372,7 @@ index=siem-cisco (host=*.maquina.grupo1.com OR host=*.maquina.grupo2.com OR host
 
 ## Cuenta por Políticas los correos entrantes sin adjuntos y con mas de 2MB de peso
 
-```spl
+```sql
 index=siem-cisco (host=*.maquina.grupo1.com OR host=*.maquina.grupo2.com OR host=*.maquina.grupo3.com) cef_6_header="Consolidated Log Event" user="*" suser!="bounce" cs1="*_IN"
     | where ESAMsgSize > 2097152
     | where (ESAAttachmentDetails=0 OR isnull(ESAAttachmentDetails)) OR ESAAttachmentDetails!=0
@@ -402,7 +402,7 @@ index=siem-cisco (host=*.maquina.grupo1.com OR host=*.maquina.grupo2.com OR host
 
 ## Cuenta correos entrantes sin adjuntos y con mas de 2MB de peso dividido por rango de tamaño
 
-```spl
+```sql
 index=siem-cisco (host=*.maquina.grupo1.com OR host=*.maquina.grupo2.com OR host=*.maquina.grupo3.com) cef_6_header="Consolidated Log Event" user="*" suser!="bounce" cs1="*_IN"
     | where ESAMsgSize > 2097152
     | where (ESAAttachmentDetails=0 OR isnull(ESAAttachmentDetails)) OR ESAAttachmentDetails!=0
@@ -434,7 +434,7 @@ index=siem-cisco (host=*.maquina.grupo1.com OR host=*.maquina.grupo2.com OR host
 
 ## Comprobar tipos de index
 
-```spl
+```sql
     | tstats count where index=siem-cisco OR index=siem-*-mta by index, sourcetype, source
 ```
 
@@ -442,7 +442,7 @@ index=siem-cisco (host=*.maquina.grupo1.com OR host=*.maquina.grupo2.com OR host
 
 ## Unir log por MID
 
-```spl
+```sql
 index=siem-cisco
     | transaction internal_message_id startswith=signature="accepted" endswith=signature="delivered" keepevicted=t maxspan=2h
     | eval dur_seg=round(duration,300)
