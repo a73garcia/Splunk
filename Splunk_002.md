@@ -1,9 +1,9 @@
 # 📖 Guía de Búsquedas en Splunk
 
-
 ---
 
 ## 0. Cómo usar esta guía
+
 - Sustituye `index="siem-cisco"` por tu índice real si aplica.
 - Si `start` viene como texto (`Wed Oct 1 14:45:43 2025`), conviértelo primero con `strptime` y formatea con `strftime`.
 - Campos habituales: `suser` (remitente), `duser` (destinatario), `internal_message_id` o `mid` (ID), `host` (ESA), `signature` (accepted/rejected), `src`/`dest` (red).
@@ -11,6 +11,7 @@
 ---
 
 ## 1. Búsquedas básicas
+
 ```spl
 index="siem-cisco"                              /* todo en el índice */
 index="siem-cisco" suser="usuario@dominio.com"  /* remitente */
@@ -21,6 +22,7 @@ index="siem-cisco" earliest=-24h latest=now     /* últimas 24h */
 ---
 
 ## 2. Campos útiles
+
 - `suser` → Remitente  
 - `duser` → Destinatario  
 - `internal_message_id` → ID del mensaje (MID)  
@@ -33,6 +35,7 @@ index="siem-cisco" earliest=-24h latest=now     /* últimas 24h */
 ---
 
 ## 3. Tablas personalizadas
+
 ```spl
 index="siem-cisco"
    | rename suser AS Sender, duser AS Recipient, internal_message_id AS MID
@@ -40,6 +43,7 @@ index="siem-cisco"
 ```
 
 Separar fecha en día y hora (ISO ordenable):
+
 ```spl
 index="siem-cisco"
    | eval start_ts=strptime(start,"%a %b %e %H:%M:%S %Y")
@@ -77,11 +81,12 @@ index="siem-cisco"
 ---
 
 ## 5. Filtrados avanzados
+
 ```spl
-index="siem-eu-mta" signature="rejected"       /* rechazados */
-index="siem-eu-mta" signature="accepted"       /* aceptados */
-index="siem-eu-mta" ESAOFVerdict="NEGATIVE"    /* veredicto negativo */
-index="siem-eu-mta" host="CIOBI301926B"        /* por host ESA */
+index="siem-cisco" signature="rejected"       /* rechazados */
+index="siem-cisco" signature="accepted"       /* aceptados */
+index="siem-cisco" ESAOFVerdict="NEGATIVE"    /* veredicto negativo */
+index="siem-cisco" host="CIOBI301926B"        /* por host ESA */
 ```
 
 ---
@@ -89,12 +94,14 @@ index="siem-eu-mta" host="CIOBI301926B"        /* por host ESA */
 ## 6. Ejemplos prácticos
 
 Ver MIDs de un remitente:
+
 ```spl
 index="siem-cisco"
    | table _time internal_message_id duser signature
 ```
 
 Top remitentes sospechosos:
+
 ```spl
 index="siem-cisco"
    | stats count BY suser
@@ -103,6 +110,7 @@ index="siem-cisco"
 ```
 
 Flujo de correos aceptados por hora:
+
 ```spl
 index="siem-cisco" signature="accepted"
    | timechart span=1h count
@@ -113,6 +121,7 @@ index="siem-cisco" signature="accepted"
 ## 6. Opciones de red
 
 ### 6.1 Filtrados de red
+
 ```spl
 index="siem-cisco" src="180.205.32.105"                 /* IP exacta */
 index="siem-cisco" src="192.168.1.0/24"                 /* rango CIDR */
@@ -123,6 +132,7 @@ index="siem-cisco" NOT src="10.*" NOT src="192.168.*"   /* públicas */
 ### 6.2 Estadísticas de red
 
 Top IP origen
+
 ```spl
 index="siem-cisco"
    | stats count BY src
@@ -131,6 +141,7 @@ index="siem-cisco"
 ```
 
 Top IP destino
+
 ```spl
 index="siem-cisco"
    | stats count BY dest
@@ -139,6 +150,7 @@ index="siem-cisco"
 ```
 
 carga por host
+
 ```spl
 index="siem-cisco"
    | stats count BY host
@@ -158,12 +170,14 @@ index="siem-cisco"
 ```
 
 ### 6.4 Reputación y anomalías
+
 ```spl
 index="siem-cisco"
    | stats dc(duser) AS destinatarios count BY src
    | where destinatarios>50
    | sort - destinatarios
 ```
+
 ```spl
 index="siem-cisco"
    | stats sum(eval(signature="rejected")) AS rechazados count AS total BY src
@@ -177,30 +191,54 @@ index="siem-cisco" NOT src="10.*" NOT src="192.168.*"            # solo pública
    | stats dc(duser) AS destinatarios count BY src               # spray detection
 ```
 
-
 ---
 
+
 ## 7. Extracción de dominios
+
+Dominio de remitente:
+
 ```spl
-index="siem-eu-mta" | rex field=suser "@(?<sender_domain>[^> ]+)$" | stats count BY sender_domain
-index="siem-eu-mta" | rex field=duser "@(?<recipient_domain>[^> ]+)$" | stats count BY recipient_domain
-index="siem-eu-mta" | rex field=suser "@(?<domain>[^> ]+)$" | stats count BY domain | sort - count | head 10
+index="siem-cisco" |
+    rex field=suser "@(?<sender_domain>[^> ]+)$"
+   | stats count BY sender_domain
+```
+
+Dominio de destinatario:
+
+```spl
+index="siem-cisco"
+   | rex field=duser "@(?<recipient_domain>[^> ]+)$"
+   | stats count BY recipient_domain
+```
+
+Top 10 dominios:
+
+```spl
+index="siem-cisco"
+   | rex field=suser "@(?<domain>[^> ]+)$"
+   | stats count BY domain
+   | sort - count
+   | head 10
 ```
 
 ---
 
 ## 8. Manejo de fechas y tiempos
+
 ```spl
-| eval start_ts=strptime(start,"%a %b %e %H:%M:%S %Y")
-| eval Fecha=strftime(start_ts,"%Y-%m-%d"), Mes=strftime(start_ts,"%Y-%m"), Hora=strftime(start_ts,"%H:%M:%S"), DiaSemana=strftime(start_ts,"%A")
+   | eval start_ts=strptime(start,"%a %b %e %H:%M:%S %Y")
+   | eval Fecha=strftime(start_ts,"%Y-%m-%d"), Mes=strftime(start_ts,"%Y-%m"), Hora=strftime(start_ts,"%H:%M:%S"), DiaSemana=strftime(start_ts,"%A")
 ```
 Agrupar por mes:
+
 ```spl
 | stats count BY Mes | sort Mes
 ```
 Franja horaria:
+
 ```spl
-| eval Hora=strftime(start_ts,"%H") | stats count BY Hora | sort Hora
+   | eval Hora=strftime(start_ts,"%H") | stats count BY Hora | sort Hora
 ```
 
 ---
