@@ -112,12 +112,12 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 ```spl
     | bin _time span=1h
     | stats count AS Correos
-        count(eval(user="acordodigital@santander.com.br")) AS "acordodigital@santander.com.br"
-        count(eval(user="notificaciones@notificaciones.santander.com.mx")) AS "notificaciones@notificaciones.santander.com.mx"
-        count(eval(user="faturaporemail@santander.com.br")) AS "faturaporemail@santander.com.br"
-        count(eval(user="mensajeria@santander.cl")) AS "mensajeria@santander.cl"
-        count(eval(user="notificaciones@santander.com.mx")) AS "notificaciones@santander.com.mx"
-        count(eval(user!="acordodigital@santander.com.br" OR user!="notificaciones@notificaciones.santander.com.mx" OR user!="faturaporemail@santander.com.br" OR user!="mensajeria@santander.cl" OR user!="notificaciones@santander.com.mx")) AS Otros
+        count(eval(user="correo1@mail.com")) AS "correo1@mail.com"
+        count(eval(user="correo2@mail.com")) AS "correo2@mail.com"
+        count(eval(user="correo3@mail.com")) AS "correo3@mail.com"
+        count(eval(user="correo4@mail.com")) AS "correo4@mail.com"
+        count(eval(user="correo5@mail.com")) AS "correo5@mail.com"
+        count(eval(user!="correo1@mail.com"" OR user!="correo2@mail.com"" OR user!="correo3@mail.com"" OR user!="correo4@mail.com"" OR user!="correo5@mail.com"")) AS Otros
     by _time
     | sort _time
     | addcoltotals
