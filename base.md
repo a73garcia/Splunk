@@ -1,7 +1,7 @@
 
 ## Busqueda base
 
-```spl
+```python
 index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Event"
     | eval HoraE = strptime(start, "%a %b %d %H:%M:%S %Y"), HoraS = strptime(end, "%a %b %d %H:%M:%S %Y"), Size(MB) = round(ESAMsgSize / 1048576, 2), HostRaw = mvindex(split(host, "."), 0), SPF = mvindex(split(SPF_verdict, ","), 5), Adjunto = mvindex(split(ESAAttachmentDetails, ","), 1)
     | eval DKIM=case(DKIM_verdict=="pass","pass", DKIM_verdict=="permfail","permfail", DKIM_verdict=="tempfail","tempfail", true(), "Other")
