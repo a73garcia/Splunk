@@ -432,9 +432,25 @@ index=siem-cisco (host=*.maquina.grupo1.com OR host=*.maquina.grupo2.com OR host
     | sort Size
 ```
 
+## Comprobar tipos de index
 
+```spl
+    | tstats count where index=siem-cisco OR index=siem-*-mta by index, sourcetype, source
+```
 
+---
 
+## Unir log por MID
+
+```spl
+index=siem-cisco
+    | transaction internal_message_id startswith=signature="accepted" endswith=signature="delivered" keepevicted=t maxspan=2h
+    | eval dur_seg=round(duration,300)
+    | rename internal_message_id AS MID
+    | table MID sender recipient subject
+```
+
+---
 
 
 
