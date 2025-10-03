@@ -21,7 +21,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Tabla de correos
 
-```spl
+```perl
     | fields CES Nodo MID Dia Entrada Salida Size(MB) dest_ip Domain Sender
     | table CES Nodo MID Dia Entrada Salida Size(MB) dest_ip Domain Sender
 ```
@@ -30,7 +30,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Tabla con datos para encolamientos
 
-```spl
+```sql
     | fields CES Nodo MID Dia Entrada Salida Size(MB) IP_Pais QueueTime Politica Categoria Reputacion Status Domain Sender Recipient
     | table CES Nodo MID Dia Entrada Salida Size(MB) IP_Pais QueueTime Politica Categoria Reputacion Status Domain Sender Recipient
 ```
