@@ -245,9 +245,97 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
     | addcoltotals
 ```
 
+---
 
+## Busqueda de correos enviado por CES APP por Dominio de Sender
 
+```spl
+    | eval HoraE = strptime(start, "%a %b %d %H:%M:%S %Y"), HoraS = strptime(end, "%a %b %d %H:%M:%S %Y"), 
+        HostRaw = mvindex(split(host, "."), 0), SPF = mvindex(split(SPF_verdict, ","), 5), 
+        ESA_Num = tonumber(replace(HostRaw, "esa-", "")), Nodo = printf("ESA%02d", ESA_Num), 
+        Dia = strftime(HoraE, "%d/%m/%Y"), Entrada = strftime(HoraE, "%H:%M"), Salida = strftime(HoraS, "%H:%M"), 
+        QueueTime = HoraS - HoraE
+    | eval CES=case(
+        like(host, "%.santandergroup.c3s2.iphmx.com"), "EU",
+        like(host, "%.hc5532-55.iphmx.com"), "AM",
+        like(host, "%.hc6154-33.iphmx.com"), "BR",
+        like(host, "%.santandergroup-out.c3s2.iphmx.com"), "APP",
+        like(host, "%.hc5533-96.iphmx.com"), "APP DR"
+    )
+    | stats values(src_user_domain) as Dominio count by cs1
+    | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
+```
 
+---
 
+## TLS
+
+```spl
+index=siem-cisco sourcetype="cisco:esa:cef" (ESATLSInProtocol="TLSv1.1" OR ESATLSOutProtocol="TLSv1.1" OR ESATLSOutProtocol="TLSv1.2") suser="*" duser="*" act="*"
+    | rex field=suser "@(?<Origen>[^>]+)"
+    | rex field=duser "@(?<Destino>[^>]+)"
+    | rename ESATLSInProtocol AS TLS_IN, ESATLSOutProtocol AS TLS_OUT, act AS Accion
+    | stats count by Origen Destino TLS_IN TLS_OUT Accion
+```
+
+---
+
+## Correos por política
+
+```spl
+    | rename cs1 AS Politica
+    | stats count by Politica
+    | addcoltotals
+    | sort Politica
+    | eval Politica = if(isnull(Politica), "Total", Politica)
+    | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
+```
+
+## Cuenta por política en meses (filas)
+
+```spl
+    | rename cs1 AS Politica
+    | bin _time span=1mon
+    | eval Mes=strftime(_time,"%m/%Y")
+    | stats count by Mes Politica
+    | sort 0 Mes Politica
+    | streamstats count AS fila_en_mes by Mes
+    | eval Mes=if(fila_en_mes=1, Mes, "")
+    | fields Mes Politica count
+    | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
+```
+
+## Cuenta por política en meses (columnas)
+
+```spl
+    | rename cs1 AS Politica
+    | bin _time span=1mon
+    | eval Mes=strftime(_time,"%Y-%m")
+    | stats count by Mes Politica
+    | sort 0 Mes
+    | xyseries Politica Mes count
+    | addcoltotals
+    | eval Politica = if(isnull(Politica), "Total", Politica)
+    | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
+    ```
+
+## Busqueda MailX
+
+```spl
+index="siem-cisco" suser="*" duser="*" start="*" event_class_id="ESA_CONSOLIDATED_LOG_EVENT"
+    | eval start_ts = strptime(start, "%a %b %e %H:%M:%S %Y")
+    | eval Dia = strftime(start_ts, "%d/%m/%Y"), Hora = strftime(start_ts, "%H:%M")
+    | rename duser AS Recipient, suser AS Sender, internal_message_id AS MID, ESAHeloDomain AS Origen, dest_host AS Destino
+    | eval Nodo=case(
+        like(host, "Maquina1%"), "host1",
+        like(host, "Maquina2%"), "host2",
+        like(host, "Maquina3%"), "host3",
+        like(host, "Maquina4%"), "host4",
+        like(host, "Maquina5%"), "host5",
+        like(host, "Maquina6%"), "host6"
+    )
+    | fields Dia Hora Nodo MID Origen Destino Sender Recipient
+    | table Dia Hora Nodo MID Origen Destino Sender Recipient
+```
 
 
