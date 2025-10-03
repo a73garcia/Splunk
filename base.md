@@ -127,5 +127,38 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ---
 
+## Correos encolamientos
 
+```spl
+    | eval QueueRange = case(
+        QueueTime < 60, "1. Menos de 1 min",
+        QueueTime >= 60 AND QueueTime < 180, "2. Hasta 3 min",
+        QueueTime >= 180 AND QueueTime < 300, "3. Hasta 5 min",
+        QueueTime >= 300 AND QueueTime < 600, "4. Hasta 10 min",
+        QueueTime >= 600, "5. Mas de 10 min"
+    )
+    | stats count by QueueRange
+    | eval count = tostring(count, "commas")
+    | sort QueueRage
+```
+---
 
+## Numero correos por senders indicado
+
+```spl
+    | bin _time span=1h
+    | stats count AS Correos
+        count(eval(user="correo1@mail.com")) AS "correo1@mail.com"
+        count(eval(user="correo2@mail.com")) AS "correo2@mail.com"
+        count(eval(user="correo3@mail.com")) AS "correo3@mail.com"
+        count(eval(user="correo4@mail.com")) AS "correo4@mail.com"
+        count(eval(user="correo5@mail.com")) AS "correo5@mail.com"
+    by _time
+    | sort _time
+    | addcoltotals
+    | eval _time = if(isnull(_time), "Total", _time)
+    | fields _time Correos "correo1@mail.com" "correo2@mail.com" "correo3@mail.com" "correo4@mail.com" "correo5@mail.com"
+    | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
+```
+
+---
