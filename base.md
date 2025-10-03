@@ -1,7 +1,7 @@
 
 ## Busqueda base
 
-```sh
+```py
 index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Event"
     | eval HoraE = strptime(start, "%a %b %d %H:%M:%S %Y"), HoraS = strptime(end, "%a %b %d %H:%M:%S %Y"), Size(MB) = round(ESAMsgSize / 1048576, 2), HostRaw = mvindex(split(host, "."), 0), SPF = mvindex(split(SPF_verdict, ","), 5), Adjunto = mvindex(split(ESAAttachmentDetails, ","), 1)
     | eval DKIM=case(DKIM_verdict=="pass","pass", DKIM_verdict=="permfail","permfail", DKIM_verdict=="tempfail","tempfail", true(), "Other")
@@ -48,7 +48,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Grafica para ver correos que han tenido un procesamiento a 90 segundos
 
-```python
+```py
     | eval esMayor90 = if(QueueTime > 90, 1, 0)
     | timechart span=1m sum(esMayor90) as EventosMayor90
 ```
@@ -66,7 +66,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Cuenta correos por sender
 
-```sh
+```py
     | stats count by Sender
 ```
 
@@ -74,7 +74,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Cuenta correos por sender
 
-```sh
+```py
     | stats count AS Correos by Sender
 ```
 
@@ -82,7 +82,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Número de correos enviados y ordenados de mayor a menor
 
-```sh
+```py
     | stats count AS Correos by Sender
     | sort - Correos
     | head 20
@@ -92,7 +92,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Pone a los valores numéricos un separador de miles con "," en vez de "."
 
-```sh
+```py
     | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
 ```
 
@@ -100,7 +100,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Cuenta correos por horas
 
-```sh
+```py
     | bin _time span=1h
     | stats count AS Correos by _time
     | sort _time
@@ -109,7 +109,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Cuenta correos por horas, totales y sender seleccionados
 
-```sh
+```py
     | bin _time span=1h
     | stats count AS Correos
         count(eval(user="correo1@mail.com")) AS "correo1@mail.com"
@@ -129,7 +129,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Correos encolamientos
 
-```spl
+```py
     | eval QueueRange = case(
         QueueTime < 60, "1. Menos de 1 min",
         QueueTime >= 60 AND QueueTime < 180, "2. Hasta 3 min",
@@ -145,7 +145,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Numero correos por senders indicado
 
-```spl
+```py
     | bin _time span=1h
     | stats count AS Correos
         count(eval(user="correo1@mail.com")) AS "correo1@mail.com"
@@ -165,7 +165,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Cuenta correos por entry log
 
-```spl
+```py
     | eval OPC1 = if(like(signature,"%valor1%"), mid, null())
     | eval OPC2 = if(like(signature,"%valor2%"), mid, null())
     | eval OPC3 = if(like(signature,"%valor3"), mid, null())
@@ -181,7 +181,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Busca correos en base al Sender y la act
 
-```spl
+```py
     | stats values(host) as host 
         values(HoraEntrada) as HoraEntrada 
         values(Accion) as Accion 
@@ -194,7 +194,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Ver numero de los por nodos y tipo de syslogs
 
-```spl
+```py
     | chart count over host by source
     | addtotals
 ```
@@ -203,7 +203,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Correos dropeado y cuarentena
 
-```spl
+```py
     | stats
         count(MID) as Total
         count(eval(QueueTime > 180)) as Encolados
@@ -217,7 +217,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ## Cuenta correos entregados y estados por nodos
 
-```spl
+```sql
     | stats 
         count(MID) as Total
         count(eval(Status="DELIVERED")) as Delivered
