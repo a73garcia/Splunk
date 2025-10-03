@@ -41,7 +41,6 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
       , QueueTime_s = if(isnum(HoraS) AND isnum(HoraE), HoraS-HoraE, null())
       , QueueTime_m = if(isnum(QueueTime_s), round(QueueTime_s/60,2), null())
 ```
----
 
 ## Tabla de correos
 
@@ -52,61 +51,55 @@ Muestra información esencial de cada correo: CES, nodo, identificador MID, fech
     | table CES Nodo MID Dia Entrada Salida Size(MB) dest_ip Domain Sender
 ```
 
----
-
 ## Tabla con datos para encolamientos
+
+Incluye detalles adicionales para analizar retrasos: país de IP, tiempo en cola, política aplicada, categoría, reputación, estado, dominio, remitente y destinatario.
 
 ```sql
     | fields CES Nodo MID Dia Entrada Salida Size(MB) IP_Pais QueueTime Politica Categoria Reputacion Status Domain Sender Recipient
     | table CES Nodo MID Dia Entrada Salida Size(MB) IP_Pais QueueTime Politica Categoria Reputacion Status Domain Sender Recipient
 ```
 
----
-
 ## Tabla con datos para encolamientos con SPF, DKIM, DMARC, Adjuntos
+
+Amplía la tabla anterior añadiendo información de validaciones de seguridad (SPF, DKIM, DMARC), si el correo tenía adjunto y los destinatarios.
 
 ```sql
     | fields CES Nodo MID Dia Entrada Salida Size(MB) IP_Pais QueueTime Politica Categoria Reputacion Status Domain Sender Adjunto SPF DMARC DKIM Recipient
     | table CES Nodo MID Dia Entrada Salida Size(MB) IP_Pais QueueTime Politica Categoria Reputacion Status Domain Sender Adjunto SPF DMARC DKIM Recipient
 ```
 
----
-
 ## Grafica para ver correos que han tenido un procesamiento a 90 segundos
+
+Grafica en el tiempo los correos cuyo tiempo en cola superó los 90 segundos, permitiendo detectar picos de retraso.
 
 ```sql
     | eval esMayor90 = if(QueueTime > 90, 1, 0)
     | timechart span=1m sum(esMayor90) as EventosMayor90
 ```
 
----
-
 ## Grafica para ver correos procesados y que han tenido un procesamiento superior a 60 segundo
+
+Muestra en un timechart el número total de correos procesados por minuto y cuántos de ellos tuvieron un tiempo en cola superior a 60 segundos.
 
 ```sql
     | eval esMayor60 = if(QueueTime > 60, 1, 0)
     | timechart span=1m dc(MID) as CorreosProcesados, sum(esMayor60) as EventosMayor60
 ```
 
----
-
 ## Cuenta correos por sender
+
+Obtiene el volumen de correos agrupados por remitente (Sender).
 
 ```sql
     | stats count by Sender
 ```
 
----
-
-## Cuenta correos por sender
-
 ```sql
     | stats count AS Correos by Sender
 ```
 
----
-
-## Número de correos enviados y ordenados de mayor a menor
+Número de correos enviados y ordenados de mayor a menor
 
 ```sql
     | stats count AS Correos by Sender
@@ -114,26 +107,27 @@ Muestra información esencial de cada correo: CES, nodo, identificador MID, fech
     | head 20
 ```
 
----
-
 ## Pone a los valores numéricos un separador de miles con "," en vez de "."
+
+Transforma los valores numéricos para que se muestren con separadores de miles (coma en lugar de punto).
 
 ```sql
     | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
 ```
 
----
-
 ## Cuenta correos por horas
+
+Muestra cuántos correos se procesaron por hora, ordenados cronológicamente.
 
 ```sql
     | bin _time span=1h
     | stats count AS Correos by _time
     | sort _time
 ```
----
 
 ## Cuenta correos por horas, totales y sender seleccionados
+
+Permite ver la evolución horaria del volumen total y de remitentes específicos, con columna adicional para “otros”.
 
 ```sql
     | bin _time span=1h
@@ -151,9 +145,9 @@ Muestra información esencial de cada correo: CES, nodo, identificador MID, fech
     | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
 ```
 
----
-
 ## Correos encolamientos
+
+Clasifica los correos según su tiempo en cola en distintos rangos (menos de 1 min, hasta 3, 5, 10 o más de 10 min).
 
 ```sql
     | eval QueueRange = case(
@@ -167,9 +161,10 @@ Muestra información esencial de cada correo: CES, nodo, identificador MID, fech
     | eval count = tostring(count, "commas")
     | sort QueueRage
 ```
----
 
 ## Numero correos por senders indicado
+
+Similar al anterior, pero centrado en los remitentes seleccionados, mostrando sus volúmenes en cada hora y el total.
 
 ```sql
     | bin _time span=1h
@@ -187,9 +182,9 @@ Muestra información esencial de cada correo: CES, nodo, identificador MID, fech
     | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
 ```
 
----
-
 ## Cuenta correos por entry log
+
+Clasifica los correos según patrones en el campo signature, mostrando totales por CES.
 
 ```sql
     | eval OPC1 = if(like(signature,"%valor1%"), mid, null())
@@ -203,9 +198,9 @@ Muestra información esencial de cada correo: CES, nodo, identificador MID, fech
     | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>',"commas"),".",","), '<<FIELD>>') ]
 ```
 
----
-
 ## Busca correos en base al Sender y la act
+
+Lista valores de host, hora de entrada, acción, identificador MID, tamaño, remitente y destinatarios, agrupados por usuario y acción.
 
 ```sql
     | stats values(host) as host 
@@ -220,14 +215,16 @@ Muestra información esencial de cada correo: CES, nodo, identificador MID, fech
 
 ## Ver numero de los por nodos y tipo de syslogs
 
+Cuenta los correos procesados agrupados por host y tipo de syslog, con totales.
+
 ```sql
     | chart count over host by source
     | addtotals
 ```
 
----
-
 ## Correos dropeado y cuarentena
+
+Muestra por nodo cuántos correos se entregaron, se encolaron, se dropearon o se pusieron en cuarentena.
 
 ```sql
     | stats
@@ -239,9 +236,9 @@ Muestra información esencial de cada correo: CES, nodo, identificador MID, fech
       by Nodo
 ```
 
----
-
 ## Cuenta correos entregados y estados por nodos
+
+Cuenta y calcula porcentajes de correos entregados, encolados, dropeados, en cuarentena, rechazados, abortados o con bounce, agrupados por CES y nodo.
 
 ```sql
     | stats 
@@ -266,14 +263,16 @@ Muestra información esencial de cada correo: CES, nodo, identificador MID, fech
 
 ## Cuenta correos por estado
 
+Resumen de acciones realizadas sobre los correos (Delivered, Dropped, Quarantined, etc.) por destinatario.
+
 ```sql
     | stats values(act) AS Estado count by act, duser
     | addcoltotals
 ```
 
----
-
 ## Busqueda de correos enviado por CES APP por Dominio de Sender
+
+Cuenta correos enviados por cada política (cs1), agrupando por dominio del remitente.
 
 ```sql
     | eval HoraE = strptime(start, "%a %b %d %H:%M:%S %Y"), HoraS = strptime(end, "%a %b %d %H:%M:%S %Y"), 
@@ -281,20 +280,21 @@ Muestra información esencial de cada correo: CES, nodo, identificador MID, fech
         ESA_Num = tonumber(replace(HostRaw, "esa-", "")), Nodo = printf("ESA%02d", ESA_Num), 
         Dia = strftime(HoraE, "%d/%m/%Y"), Entrada = strftime(HoraE, "%H:%M"), Salida = strftime(HoraS, "%H:%M"), 
         QueueTime = HoraS - HoraE
-    | eval CES=case(
-        like(host, "%.santandergroup.c3s2.iphmx.com"), "EU",
-        like(host, "%.hc5532-55.iphmx.com"), "AM",
-        like(host, "%.hc6154-33.iphmx.com"), "BR",
-        like(host, "%.santandergroup-out.c3s2.iphmx.com"), "APP",
-        like(host, "%.hc5533-96.iphmx.com"), "APP DR"
-    )
+    | eval CES = case(
+      like(host,"%.maquina.grupo1.com"), "Grupo1",
+      like(host,"%.maquina.grupo2.com"), "Grupo2",
+      like(host,"%.maquina.grupo3.com"), "Grupo3",
+      like(host,"%.maquina.grupo4.com"), "Grupo4",
+      like(host,"%.maquina.grupo5.com"), "Grupo5",
+      true(), "Otro"
+  )
     | stats values(src_user_domain) as Dominio count by cs1
     | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
 ```
 
----
-
 ## TLS
+
+Analiza protocolos TLS de entrada y salida (TLSv1.1, TLSv1.2) mostrando remitente, destino y acción asociada.
 
 ```sql
 index=siem-cisco sourcetype="cisco:esa:cef" (ESATLSInProtocol="TLSv1.1" OR ESATLSOutProtocol="TLSv1.1" OR ESATLSOutProtocol="TLSv1.2") suser="*" duser="*" act="*"
@@ -304,9 +304,9 @@ index=siem-cisco sourcetype="cisco:esa:cef" (ESATLSInProtocol="TLSv1.1" OR ESATL
     | stats count by Origen Destino TLS_IN TLS_OUT Accion
 ```
 
----
-
 ## Correos por política
+
+Cuenta los correos agrupados por política aplicada. Incluye totales y ordenamiento alfabético.
 
 ```sql
     | rename cs1 AS Politica
@@ -317,9 +317,9 @@ index=siem-cisco sourcetype="cisco:esa:cef" (ESATLSInProtocol="TLSv1.1" OR ESATL
     | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
 ```
 
----
-
 ## Cuenta por política en meses (filas)
+
+Genera una tabla con el número de correos por política, distribuidos en filas por mes.
 
 ```sql
     | rename cs1 AS Politica
@@ -333,9 +333,9 @@ index=siem-cisco sourcetype="cisco:esa:cef" (ESATLSInProtocol="TLSv1.1" OR ESATL
     | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
 ```
 
----
-
 ## Cuenta por política en meses (columnas)
+
+Muestra las políticas en filas y los meses en columnas, con totales y subtotales.
 
 ```sql
     | rename cs1 AS Politica
@@ -348,9 +348,10 @@ index=siem-cisco sourcetype="cisco:esa:cef" (ESATLSInProtocol="TLSv1.1" OR ESATL
     | eval Politica = if(isnull(Politica), "Total", Politica)
     | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
     ```
----
 
-## Busqueda MailX
+## Busqueda OnPremise
+
+Normaliza logs del evento ESA_CONSOLIDATED_LOG_EVENT, mostrando fecha, hora, nodo, MID, host origen, host destino, remitente y destinatario.
 
 ```sql
 index="siem-cisco" suser="*" duser="*" start="*" event_class_id="ESA_CONSOLIDATED_LOG_EVENT"
@@ -368,9 +369,10 @@ index="siem-cisco" suser="*" duser="*" start="*" event_class_id="ESA_CONSOLIDATE
     | fields Dia Hora Nodo MID Origen Destino Sender Recipient
     | table Dia Hora Nodo MID Origen Destino Sender Recipient
 ```
----
 
 ## Correos entrantes sin adjuntos y con mas de 2MB de peso
+
+Busca correos entrantes mayores a 2MB que no tienen adjuntos (o no se registraron). Incluye datos de política, nodo, remitente y fecha.
 
 ```sql
 index=siem-cisco (host=*.maquina.grupo1.com OR host=*.maquina.grupo2.com OR host=*.maquina.grupo3.com) cef_6_header="Consolidated Log Event" user="*" suser!="bounce" cs1="*_IN"
@@ -394,9 +396,9 @@ index=siem-cisco (host=*.maquina.grupo1.com OR host=*.maquina.grupo2.com OR host
     | table CES Nodo Politica MID Dia Entrada Size Sender Adjunto
 ```
 
----
-
 ## Cuenta por Políticas los correos entrantes sin adjuntos y con mas de 2MB de peso
+
+Clasifica los correos anteriores por política aplicada y mes.
 
 ```sql
 index=siem-cisco (host=*.maquina.grupo1.com OR host=*.maquina.grupo2.com OR host=*.maquina.grupo3.com) cef_6_header="Consolidated Log Event" user="*" suser!="bounce" cs1="*_IN"
@@ -424,9 +426,10 @@ index=siem-cisco (host=*.maquina.grupo1.com OR host=*.maquina.grupo2.com OR host
     | eval Politica = if(isnull(Politica), "Total", Politica)
     | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
 ```
----
 
 ## Cuenta correos entrantes sin adjuntos y con mas de 2MB de peso dividido por rango de tamaño
+
+Clasifica correos anteriores en rangos de tamaño (2–3MB, 3–5MB, 5–10MB, etc.).
 
 ```sql
 index=siem-cisco (host=*.maquina.grupo1.com OR host=*.maquina.grupo2.com OR host=*.maquina.grupo3.com) cef_6_header="Consolidated Log Event" user="*" suser!="bounce" cs1="*_IN"
@@ -460,13 +463,15 @@ index=siem-cisco (host=*.maquina.grupo1.com OR host=*.maquina.grupo2.com OR host
 
 ## Comprobar tipos de index
 
+Muestra qué índices, sourcetype y fuentes están disponibles en el sistema para los logs.
+
 ```sql
     | tstats count where index=siem-cisco OR index=siem-*-mta by index, sourcetype, source
 ```
 
----
-
 ## Unir log por MID
+
+Agrupa eventos relacionados de un mismo mensaje (MID), desde que fue aceptado hasta que se entregó, mostrando remitente, destinatario y asunto.
 
 ```sql
 index=siem-cisco
@@ -476,7 +481,7 @@ index=siem-cisco
     | table MID sender recipient subject
 ```
 
----
+
 
 
 
