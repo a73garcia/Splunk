@@ -72,6 +72,60 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 
 ---
 
+## Cuenta correos por sender
+
+```spl
+    | stats count AS Correos by Sender
+```
+
+---
+
+## Número de correos enviados y ordenados de mayor a menor
+
+```spl
+    | stats count AS Correos by Sender
+    | sort - Correos
+    | head 20
+```
+
+---
+
+## Pone a los valores numéricos un separador de miles con "," en vez de "."
+
+```spl
+    | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
+```
+
+---
+
+## Cuenta correos por horas
+
+```spl
+    | bin _time span=1h
+    | stats count AS Correos by _time
+    | sort _time
+```
+---
+
+## Cuenta correos por horas, totales y sender seleccionados
+
+```spl
+    | bin _time span=1h
+    | stats count AS Correos
+        count(eval(user="acordodigital@santander.com.br")) AS "acordodigital@santander.com.br"
+        count(eval(user="notificaciones@notificaciones.santander.com.mx")) AS "notificaciones@notificaciones.santander.com.mx"
+        count(eval(user="faturaporemail@santander.com.br")) AS "faturaporemail@santander.com.br"
+        count(eval(user="mensajeria@santander.cl")) AS "mensajeria@santander.cl"
+        count(eval(user="notificaciones@santander.com.mx")) AS "notificaciones@santander.com.mx"
+        count(eval(user!="acordodigital@santander.com.br" OR user!="notificaciones@notificaciones.santander.com.mx" OR user!="faturaporemail@santander.com.br" OR user!="mensajeria@santander.cl" OR user!="notificaciones@santander.com.mx")) AS Otros
+    by _time
+    | sort _time
+    | addcoltotals
+    | eval _time = if(isnull(_time), "Total", _time)
+    | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
+```
+
+---
 
 
 
