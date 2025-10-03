@@ -166,13 +166,13 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
 ## Cuenta correos por entry log
 
 ```spl
-    | eval TSP = if(like(signature,"%valor1%"), mid, null())
-    | eval RFC = if(like(signature,"%valor2%"), mid, null())
-    | eval NCDKIM = if(like(signature,"%valor3"), mid, null())
+    | eval OPC1 = if(like(signature,"%valor1%"), mid, null())
+    | eval OPC2 = if(like(signature,"%valor2%"), mid, null())
+    | eval OPC3 = if(like(signature,"%valor3"), mid, null())
     | stats dc(mid) AS Total_Correos 
-        dc(TSP) AS "valor1" 
-        dc(RFC) AS "valor2" 
-        dc(NCDKIM) AS "valor3" 
+        dc(OPC1) AS "valor1" 
+        dc(OPC2) AS "valor2" 
+        dc(OPC3) AS "valor3" 
     by CES
     | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>',"commas"),".",","), '<<FIELD>>') ]
 ```
@@ -213,10 +213,37 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
       by Nodo
 ```
 
+---
 
+## Cuenta correos entregados y estados por nodos
 
+```spl
+    | stats 
+        count(MID) as Total
+        count(eval(Status="DELIVERED")) as Delivered
+        count(eval(QueueTime > 180)) as Encolados
+        count(eval(Status="QUARANTINED")) as Quarantined
+        count(eval(Status="DROPPED")) as Dropped
+        count(eval(Status="DQ")) as DQ
+        count(eval(Status="BOUNCED")) as Bounce
+        count(eval(Status="ABORTED")) as Aborted
+    by CES, Nodo
+    | eval Delivered = tostring(Delivered, "commas") . " (" . round((Delivered / Total) * 100, 2) . "%)"
+    | eval Encolados = tostring(Encolados, "commas") . " (" . round((Encolados / Total) * 100, 2) . "%)"
+    | eval Quarantined = tostring(Quarantined, "commas") . " (" . round((Quarantined / Total) * 100, 2) . "%)"
+    | eval Dropped = tostring(Dropped, "commas") . " (" . round((Dropped / Total) * 100, 2) . "%)"
+    | eval DQ = tostring(DQ, "commas") . " (" . round((DQ / Total) * 100, 2) . "%)"
+    | eval Bounce = tostring(Bounce, "commas") . " (" . round((Bounce / Total) * 100, 2) . "%)"
+    | eval Aborted = tostring(Aborted, "commas") . " (" . round((Aborted / Total) * 100, 2) . "%)"
+    | eval Total = tostring(Total, "commas")
+```
 
+## Cuenta correos por estado
 
+```spl
+    | stats values(act) AS Estado count by act, duser
+    | addcoltotals
+```
 
 
 
