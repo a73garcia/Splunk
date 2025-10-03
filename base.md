@@ -291,6 +291,8 @@ index=siem-cisco sourcetype="cisco:esa:cef" (ESATLSInProtocol="TLSv1.1" OR ESATL
     | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
 ```
 
+---
+
 ## Cuenta por política en meses (filas)
 
 ```spl
@@ -305,6 +307,8 @@ index=siem-cisco sourcetype="cisco:esa:cef" (ESATLSInProtocol="TLSv1.1" OR ESATL
     | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
 ```
 
+---
+
 ## Cuenta por política en meses (columnas)
 
 ```spl
@@ -318,6 +322,7 @@ index=siem-cisco sourcetype="cisco:esa:cef" (ESATLSInProtocol="TLSv1.1" OR ESATL
     | eval Politica = if(isnull(Politica), "Total", Politica)
     | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
     ```
+---
 
 ## Busqueda MailX
 
@@ -337,5 +342,107 @@ index="siem-cisco" suser="*" duser="*" start="*" event_class_id="ESA_CONSOLIDATE
     | fields Dia Hora Nodo MID Origen Destino Sender Recipient
     | table Dia Hora Nodo MID Origen Destino Sender Recipient
 ```
+---
+
+## Correos entrantes sin adjuntos y con mas de 2MB de peso
+
+```spl
+index=siem-cisco (host=*.maquina.grupo1.com OR host=*.maquina.grupo2.com OR host=*.maquina.grupo3.com) cef_6_header="Consolidated Log Event" user="*" suser!="bounce" cs1="*_IN"
+    | where ESAMsgSize > 2097152
+    | where (ESAAttachmentDetails=0 OR isnull(ESAAttachmentDetails)) OR ESAAttachmentDetails!=0
+    | eval HoraE = strptime(start, "%a %b %d %H:%M:%S %Y"), 
+           Size = round(ESAMsgSize / 1048576, 2), 
+           HostRaw = mvindex(split(host, "."), 0)
+    | rename ESAMID AS MID, user AS Sender, duser AS Recipient, cs1 AS Politica
+    | eval ESA_Num = tonumber(replace(HostRaw,"esa-","")), Nodo = printf("ESA%02d", ESA_Num), 
+           Adjunto = mvindex(split(ESAAttachmentDetails, ","), 1)
+    | eval CES=case(
+           like(host,"%.maquina.grupo1.com"), "Grupo1",
+           like(host,"%.maquina.grupo2.com"), "Grupo2",
+           like(host,"%.maquina.grupo3.com"), "Grupo3",
+           like(host,"%.maquina.grupo4.com"), "Grupo4",
+           like(host,"%.maquina.grupo5.com"), "Grupo5"
+    )
+    | eval Dia = strftime(HoraE,"%d/%m/%Y"), Entrada = strftime(HoraE,"%H:%M")
+    | fields CES Nodo Politica MID Dia Entrada Size Sender Adjunto
+    | table CES Nodo Politica MID Dia Entrada Size Sender Adjunto
+```
+
+---
+
+## Cuenta por Políticas los correos entrantes sin adjuntos y con mas de 2MB de peso
+
+```spl
+index=siem-cisco (host=*.maquina.grupo1.com OR host=*.maquina.grupo2.com OR host=*.maquina.grupo3.com) cef_6_header="Consolidated Log Event" user="*" suser!="bounce" cs1="*_IN"
+    | where ESAMsgSize > 2097152
+    | where (ESAAttachmentDetails=0 OR isnull(ESAAttachmentDetails)) OR ESAAttachmentDetails!=0
+    | eval HoraE = strptime(start, "%a %b %d %H:%M:%S %Y"), 
+           Size = round(ESAMsgSize / 1048576, 2), 
+           HostRaw = mvindex(split(host, "."), 0)
+    | rename ESAMID AS MID, user AS Sender, duser AS Recipient, cs1 AS Politica
+    | eval ESA_Num = tonumber(replace(HostRaw,"esa-","")), Nodo = printf("ESA%02d", ESA_Num), 
+           Adjunto = mvindex(split(ESAAttachmentDetails, ","), 1)
+    | eval CES=case(
+           like(host,"%.maquina.grupo1.com"), "Grupo1",
+           like(host,"%.maquina.grupo2.com"), "Grupo2",
+           like(host,"%.maquina.grupo3.com"), "Grupo3",
+           like(host,"%.maquina.grupo4.com"), "Grupo4",
+           like(host,"%.maquina.grupo5.com"), "Grupo5"
+    )
+    | eval Dia = strftime(HoraE,"%d/%m/%Y"), Entrada = strftime(HoraE,"%H:%M")
+    | bin _time span=1mon
+    | eval Mes=strftime(_time,"%Y-%m")
+    | stats count by Mes Politica
+    | sort 0 Mes Politica
+    | addcoltotals
+    | eval Politica = if(isnull(Politica), "Total", Politica)
+    | foreach * [ eval <<FIELD>> = if(isnum('<<FIELD>>'), replace(tostring('<<FIELD>>', "commas"), ".", ","), '<<FIELD>>') ]
+```
+---
+
+## Cuenta correos entrantes sin adjuntos y con mas de 2MB de peso dividido por rango de tamaño
+
+```spl
+index=siem-cisco (host=*.maquina.grupo1.com OR host=*.maquina.grupo2.com OR host=*.maquina.grupo3.com) cef_6_header="Consolidated Log Event" user="*" suser!="bounce" cs1="*_IN"
+    | where ESAMsgSize > 2097152
+    | where (ESAAttachmentDetails=0 OR isnull(ESAAttachmentDetails)) OR ESAAttachmentDetails!=0
+    | eval HoraE = strptime(start, "%a %b %d %H:%M:%S %Y"), 
+           Size = round(ESAMsgSize / 1048576, 2)
+    | rename ESAMID AS MID, user AS Sender, duser AS Recipient
+    | eval ESA_Num = tonumber(replace(HostRaw,"esa-","")), Nodo = printf("ESA%02d", ESA_Num), 
+           Adjunto = mvindex(split(ESAAttachmentDetails, ","), 1)
+    | eval CES=case(
+           like(host,"%.maquina.grupo1.com"), "Grupo1",
+           like(host,"%.maquina.grupo2.com"), "Grupo2",
+           like(host,"%.maquina.grupo3.com"), "Grupo3",
+           like(host,"%.maquina.grupo4.com"), "Grupo4",
+           like(host,"%.maquina.grupo5.com"), "Grupo5"
+    )
+    | eval Dia = strftime(HoraE,"%d/%m/%Y"), Entrada = strftime(HoraE,"%H:%M")
+    | eval Size = case(
+           Size < 3, "1. Entre 2 y 3 MB",
+           Size >= 3 AND Size < 5, "2. Entre 3 y 5 MB",
+           Size >= 5 AND Size < 10, "3. Entre 5 y 10 MB",
+           Size >= 10 AND Size < 20, "4. Entre 10 y 20 MB",
+           Size >= 20 AND Size < 30, "5. Entre 20 y 30 MB",
+           Size >= 30, "6. Mas de 30 MB"
+    )
+    | stats count by Size
+    | eval count = tostring(count, "commas")
+    | sort Size
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
