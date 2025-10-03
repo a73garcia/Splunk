@@ -43,7 +43,6 @@ index="siem-cisco"
 ```
 
 Separar fecha en día y hora (ISO ordenable):
-
 ```spl
 index="siem-cisco"
    | eval start_ts=strptime(start,"%a %b %e %H:%M:%S %Y")
