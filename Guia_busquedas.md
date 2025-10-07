@@ -42,6 +42,7 @@ index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Ev
       , QueueTime_m = if(isnum(QueueTime_s), round(QueueTime_s/60,2), null())
 ```
 
+
 ## Tabla de correos
 
 Muestra información esencial de cada correo: CES, nodo, identificador MID, fecha, hora de entrada/salida, tamaño en MB, IP de destino, dominio y remitente.
