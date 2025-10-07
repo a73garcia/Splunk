@@ -37,7 +37,7 @@ El servidor de envío (`drgdgd.com`) **no está autorizado** para enviar mensaje
 
 ## 🛠️ Recomendaciones técnicas
 
-### 1. Corregir autenticación del dominio `lyntech.com`
+### 1. Corregir autenticación del dominio `bbb.com`
 - **Actualizar el registro SPF**:
   ```txt
   v=spf1 include:werrsfs.com include:spf.protection.outlook.com -all
