@@ -1,18 +1,9 @@
 # 🧭 Guía Completa de Búsquedas en Splunk
 
-> **Autor:** AntG  
-> **Versión:** 1.0  
-> **Fecha:** 2025-10-07  
-> **Propósito:** Dominar las opciones de búsqueda en Splunk para análisis, depuración y generación de dashboards.
-
----
-
 ## 📘 Introducción
 
 Splunk permite buscar, filtrar y analizar grandes volúmenes de datos mediante su propio lenguaje: **SPL (Search Processing Language)**.  
 Esta guía recopila las **opciones y comandos más utilizados** para realizar búsquedas efectivas, optimizar consultas y crear estadísticas visuales.
-
----
 
 ## 🔍 1. Tipos de Búsquedas en Splunk
 
@@ -22,8 +13,6 @@ Esta guía recopila las **opciones y comandos más utilizados** para realizar b�
 | **Por campo** | Filtra valores específicos en campos. | `status=404` |
 | **Combinada** | Usa operadores lógicos. | `host=mail* AND action=blocked` |
 | **Con comandos** | Procesa resultados con SPL. | `index=mail | stats count by sender` |
-
----
 
 ## ⚙️ 2. Estructura General de una Búsqueda
 
@@ -38,8 +27,6 @@ Ejemplo:
 ```spl
 index=siem-mail sourcetype=cisco:esa | stats count by sender
 ```
-
----
 
 ## 🔧 3. Filtros y Operadores
 
@@ -58,8 +45,6 @@ index=siem-mail sourcetype=cisco:esa | stats count by sender
 | `<`, `>`, `<=`, `>=` | Comparaciones numéricas |
 | `IN()` | Valores dentro de lista → `status IN (400,404,500)` |
 
----
-
 ## ⏱️ 4. Filtros de Tiempo
 
 | Intervalo | Ejemplo | Descripción |
@@ -70,8 +55,6 @@ index=siem-mail sourcetype=cisco:esa | stats count by sender
 | Día anterior | `earliest=-1d@d latest=@d` | Día completo anterior |
 
 > 💡 Puedes aplicarlos en el panel superior o dentro del comando `search`.
-
----
 
 ## 📊 5. Comandos Principales de Búsqueda
 
@@ -143,8 +126,6 @@ Aplica condiciones avanzadas.
 | where Size_MB > 2 AND action="blocked"
 ```
 
----
-
 ## 🧮 6. Ejemplos Combinados
 
 ### 🧩 Ejemplo 1 — Correos bloqueados por tamaño
@@ -169,8 +150,6 @@ index=siem-mail
 | timechart count by host
 ```
 
----
-
 ## 🧰 7. Comandos Avanzados
 
 | Comando | Función | Ejemplo |
@@ -182,8 +161,6 @@ index=siem-mail
 | `transaction` | Agrupa eventos relacionados | `| transaction MID maxspan=30s` |
 | `fillnull` | Sustituye valores nulos | `| fillnull value="N/A"` |
 
----
-
 ## 🧠 8. Buenas Prácticas
 
 ✅ Usa filtros de tiempo siempre.  
@@ -192,8 +169,6 @@ index=siem-mail
 ✅ Aprovecha `stats` y `timechart` para reducir volumen.  
 ✅ Guarda las búsquedas útiles como **Saved Searches** o **Alerts**.  
 ✅ Añade `| head 20` al final mientras pruebas para evitar sobrecarga.
-
----
 
 ## 📈 9. Ejemplo Real de Optimización
 
@@ -207,14 +182,6 @@ index=siem-mail host="*.grupo.com"
 
 👉 Resultado: lista de remitentes con correos grandes sin adjunto, agrupados por política.
 
----
-
-## 🏁 Conclusión
-
-Dominar las opciones de búsqueda en Splunk permite **acelerar el análisis forense, detectar anomalías y construir dashboards inteligentes**.  
-Combina los comandos según tus necesidades y guarda tus mejores consultas como base de conocimiento.
-
----
 
 📂 **Repositorio recomendado:**  
 > [GitHub: Splunk Queries and Best Practices](https://github.com/splunk)
