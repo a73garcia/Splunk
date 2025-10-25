@@ -2,7 +2,7 @@
 
 ## Busqueda tipo en SPLUNK
 
-```spl
+```cql
 index=siem-sp-cisco host="*.maquina.grupo.com" cef_6_header="Consolidated Log Event"
 	| eval HoraE = coalesce(strptime(start, "%a %b %d %H:%M:%S %Y"), _time)
       	, HoraS = strptime(end,   "%a %b %d %H:%M:%S %Y")
