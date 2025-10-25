@@ -1,6 +1,6 @@
 
 
-
+```spl
 # Repositorio (index) y filtros iniciales
 repository = "siem-sp-cisco"
 host =~ "*.maquina.grupo.com"
@@ -70,3 +70,8 @@ cef_6_header == "Consolidated Log Event"
 
 # (Opcional, para presentación tipo tabla)
 | table CES, Nodo, MID, Dia, Entrada, Salida, "Size(MB)", IP_Pais, QueueTime_m, Politica, Categoria, Reputacion, Status, Domain, Sender, Recipient
+```
+
+
+
+
