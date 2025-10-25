@@ -57,9 +57,9 @@ cef_6_header == "Consolidated Log Event"
 | parseDate(field=start, format="%a %b %d %H:%M:%S %Y") as HoraE_tmp
 | parseDate(field=end, format="%a %b %d %H:%M:%S %Y")   as HoraS_tmp
 | coalesce([HoraE_tmp, @timestamp])                     as HoraE
-| HoraS_tmp                                              as HoraS
+| HoraS_tmp                                             as HoraS
 
-| eval("Size(MB)" = round(ESAMsgSize / 1048576, 2))
+| eval(Size_MB = round(ESAMsgSize / 1048576, 2))
 | eval(HostRaw = split(host, ".")[0])
 | eval(SPF = split(SPF_verdict, ",")[5])
 | eval(Adjunto = split(ESAAttachmentDetails, ",")[1])
@@ -109,14 +109,13 @@ cef_6_header == "Consolidated Log Event"
 | eval(Dia = formatTime(HoraE, "%d/%m/%Y"))
 | eval(Entrada = formatTime(HoraE, "%H:%M"))
 | eval(Salida = if(is_number(HoraS), formatTime(HoraS, "%H:%M"), null()))
-| eval(QueueTime_s = if(is_number(HoraS) && is_number(HoraE), HoraS - HoraE, null()))
-| eval(QueueTime_m = if(is_number(QueueTime_s), round(QueueTime_s / 60, 2), null()))
+| eval(QueueTime = if(is_number(HoraS) && is_number(HoraE), HoraS - HoraE, null()))
 
 # ---- Selección final de campos ----
-| fields CES, Nodo, MID, Dia, Entrada, Salida, "Size(MB)", IP_Pais, QueueTime_m, Politica, Categoria, Reputacion, Status, Domain, Sender, Recipient
+| fields CES, Nodo, MID, Dia, Entrada, Salida, Size_MB, IP_Pais, QueueTime, Politica, Categoria, Reputacion, Status, Domain, Sender, Recipient
 
 # (Opcional, para presentación tipo tabla)
-| table CES, Nodo, MID, Dia, Entrada, Salida, "Size(MB)", IP_Pais, QueueTime_m, Politica, Categoria, Reputacion, Status, Domain, Sender, Recipient
+| table CES, Nodo, MID, Dia, Entrada, Salida, Size_MB, IP_Pais, QueueTime, Politica, Categoria, Reputacion, Status, Domain, Sender, Recipient
 ```
 
 Consejos de uso en LogScale
@@ -131,11 +130,12 @@ repository = "siem-sp-cisco" | fields _all | head(1)
 
 ```cql
 | groupBy(CES)
-    (avg("Size(MB)") as AvgSize_MB, avg(QueueTime_m) as AvgQueue_m, count() as Total)
+    (avg(Size_MB) as AvgSize_MB, avg(QueueTime) as AvgQueue, count() as Total)
 | sort(desc: Total)
 ```
 
 • 🕒 Todos los campos HoraE, HoraS y derivados quedan como tipo datetime, por lo que puedes graficar o usar en dashboards sin formatearlos nuevamente.
+
 
 
 
