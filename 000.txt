@@ -1,0 +1,21 @@
+trim(
+    replace(
+        first(
+            split(
+                first(
+                    split(
+                        last(
+                            split(
+                                replace(variables('Cuerpo'), decodeUriComponent('%0D%0A'), decodeUriComponent('%0A')),
+                                if(contains(variables('Cuerpo'), 'cambio:'), 'cambio:', 'cambio:')
+                            )
+                        ),
+                        concat(decodeUriComponent('%0A'), 'Estado:')
+                    )
+                ),
+                'http'
+            )
+        ),
+        '[', ''
+    )
+)
