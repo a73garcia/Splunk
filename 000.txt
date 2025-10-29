@@ -1,3 +1,6 @@
+@{concat('| ', item()?['Cluster'], ' | ', item()?['Node'], ' | ', item()?['Info'], ' | ', item()?['User'], ' | ', item()?['Data'], ' |\n')}
+
+
 {
   "type": "AdaptiveCard",
   "body": [
