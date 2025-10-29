@@ -10,6 +10,44 @@ Lista completa del archivo CES Audit (hoja Users):
 
 
 
+📊 **CES Audit – Registros agrupados por Cluster**
+
+@{join(
+  union(
+    select(
+      body('Enu_TABLA'),
+      concat(
+        '🟢 **',
+        item()?['Cluster'],
+        '**',
+        '\n| Node | Info | User | Data |',
+        '\n|------|------|------|------|',
+        '\n| ',
+        item()?['Node'],
+        ' | ',
+        item()?['Info'],
+        ' | ',
+        item()?['User'],
+        ' | ',
+        item()?['Data'],
+        ' |'
+      )
+    ),
+    createArray('')
+  ),
+  '\n\n'
+)}
+
+
+
+
+
+
+
+
+
+
+
 
 
 {
