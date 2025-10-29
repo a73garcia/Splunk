@@ -1,13 +1,73 @@
-replace(
-  replace(
-    replace(
-      replace(variables('Texto'),'https://',''),
-      'http://',''),
-    'www.',''),
-  '.com',''
-)
+{
+  "type": "AdaptiveCard",
+  "body": [
+    {
+      "type": "Container",
+      "items": [
+        {
+          "type": "TextBlock",
+          "text": "🚨 NUEVA INCIDENCIA DETECTADA",
+          "weight": "Bolder",
+          "size": "Large",
+          "color": "Attention",
+          "horizontalAlignment": "Center"
+        },
+        {
+          "type": "TextBlock",
+          "text": "Detalles del evento:",
+          "weight": "Bolder",
+          "spacing": "Medium"
+        },
+        {
+          "type": "FactSet",
+          "facts": [
+            {
+              "title": "🆔 ID Correlación:",
+              "value": "@{variables('IDCORRELACION')}"
+            },
+            {
+              "title": "📋 INC:",
+              "value": "@{variables('INC')}"
+            },
+            {
+              "title": "⚠️ Alerta:",
+              "value": "@{variables('ALERTA')}"
+            },
+            {
+              "title": "🔥 Prioridad:",
+              "value": "@{variables('PRIORIDAD')}"
+            }
+          ]
+        },
+        {
+          "type": "TextBlock",
+          "text": "──────────────────────────",
+          "color": "Accent",
+          "spacing": "Medium"
+        },
+        {
+          "type": "TextBlock",
+          "text": "🕒 Notificación generada automáticamente por Power Automate",
+          "isSubtle": true,
+          "size": "Small",
+          "horizontalAlignment": "Center"
+        }
+      ]
+    }
+  ],
+  "$schema": "http://adaptivecards.io/schemas/adaptive-card.json",
+  "version": "1.4"
+}
 
-replace(outputs('Componer_(Eliminar_URLs)'), '\n', '<br>')
+
+🚨 **Nueva incidencia detectada** 🚨  
+
+**🆔 ID Correlación:** `@{variables('IDCORRELACION')}`  
+**📋 INC:** `@{variables('INC')}`  
+**⚠️ Alerta:** `@{variables('ALERTA')}`  
+**🔥 Prioridad:** `@{variables('PRIORIDAD')}`  
+
+───────────────────────────  
+🕒 *Notificación generada automáticamente por Power Automate*
 
 
-@{outputs('Componer_(Mantener_formato)')}
