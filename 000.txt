@@ -1,21 +1,13 @@
-trim(
+replace(
+  replace(
     replace(
-        first(
-            split(
-                first(
-                    split(
-                        last(
-                            split(
-                                replace(variables('Cuerpo'), decodeUriComponent('%0D%0A'), decodeUriComponent('%0A')),
-                                if(contains(variables('Cuerpo'), 'cambio:'), 'cambio:', 'cambio:')
-                            )
-                        ),
-                        concat(decodeUriComponent('%0A'), 'Estado:')
-                    )
-                ),
-                'http'
-            )
-        ),
-        '[', ''
-    )
+      replace(variables('Texto'),'https://',''),
+      'http://',''),
+    'www.',''),
+  '.com',''
 )
+
+replace(outputs('Componer_(Eliminar_URLs)'), '\n', '<br>')
+
+
+@{outputs('Componer_(Mantener_formato)')}
