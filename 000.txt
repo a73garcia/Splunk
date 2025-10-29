@@ -1,5 +1,16 @@
 @{concat('| ', item()?['Cluster'], ' | ', item()?['Node'], ' | ', item()?['Info'], ' | ', item()?['User'], ' | ', item()?['Data'], ' |\n')}
 
+📊 **CES Audit – Registros actuales**
+Lista completa del archivo CES Audit (hoja Users):
+
+| Cluster | Node | Info | User | Data |
+|----------|------|------|------|------|
+@{variables('TEXTO')}
+
+
+
+
+
 
 {
   "type": "AdaptiveCard",
