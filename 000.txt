@@ -122,4 +122,14 @@ Lista completa del archivo CES Audit (hoja Users):
 ───────────────────────────  
 🕒 *Notificación generada automáticamente por Power Automate*
 
-
+trim(
+    replace(
+        replace(
+            split(variables('EstVarDatos'), '</td>')[3],
+            '<td>',
+            ''
+        ),
+        '</td>',
+        ''
+    )
+)
