@@ -7,7 +7,7 @@ Lista completa del archivo CES Audit (hoja Users):
 |----------|------|------|------|------|
 @{variables('TEXTO')}
 
-
+=IZQUIERDA(A1;HALLAR("fue";A1)+3)&" "&B1&" "&DERECHA(A1;LARGO(A1)-HALLAR("procesado";A1)+1)
 
 
 📊 **CES Audit – Registros agrupados por Cluster**
