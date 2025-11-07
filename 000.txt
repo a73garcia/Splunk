@@ -12,7 +12,13 @@ Lista completa del archivo CES Audit (hoja Users):
 
 substring(outputs('NombreDeTuAcción'), indexOf(outputs('NombreDeTuAcción'), 'BLACKLIST MONITORING CHANGES DETECTED'), sub(indexOf(outputs('NombreDeTuAcción'), '*Note:'), indexOf(outputs('NombreDeTuAcción'), 'BLACKLIST MONITORING CHANGES DETECTED')))
 
+-------
+replace(variables('LIMPIO'), '\[[^\]]*\]\([^)]+\)', '')
 
+replace(variables('LIMPIO'), '\[[^\]]*\]', '')
+
+
+-----
 
 
 📊 **CES Audit – Registros agrupados por Cluster**
