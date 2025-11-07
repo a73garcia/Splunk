@@ -18,6 +18,12 @@ replace(variables('LIMPIO'), '\[[^\]]*\]\([^)]+\)', '')
 replace(variables('LIMPIO'), '\[[^\]]*\]', '')
 
 
+replace(variables('LIMPIO'), '\n', decodeUriComponent('%0A'))
+
+replace(variables('LIMPIO'), '\n', '<br>')
+
+
+
 -----
 
 
