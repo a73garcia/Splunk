@@ -1,22 +1,26 @@
+
+
 index="ise-cloud-cdossi" sourcetype="cisco:esa"
 
-* Selección del dominio según IN/OUT *
-| eval domain = case(
-        cs1="OUT", src_domain,
-        cs1="IN", recipient_domain
+* Determinar si es IN o OUT según el valor de cs1 *
+| eval direction = case(
+        like(cs1, "%IN%"), "IN",
+        like(cs1, "%OUT%"), "OUT",
+        true(), "UNKNOWN"
     )
 
-* Normalizar dirección *
-| eval direction = if(cs1="IN","IN","OUT")
+* Elegir el dominio correcto según IN/OUT *
+| eval domain = case(
+        direction="OUT", src_domain,
+        direction="IN", recipient_domain,
+        true(), null()
+    )
 
-* Conteo por dominio y dirección (IN/OUT) *
-| stats count BY domain direction
+* Contadores *
+| eval IN = if(direction="IN", 1, 0)
+| eval OUT = if(direction="OUT", 1, 0)
 
-* Convertimos direction a columnas IN y OUT *
-| eval IN = if(direction="IN", count, 0)
-| eval OUT = if(direction="OUT", count, 0)
-
-* Agrupación final para que solo quede una fila por dominio *
+* Agrupación final *
 | stats sum(IN) as IN sum(OUT) as OUT by domain
 
 | sort domain
