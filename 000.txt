@@ -1,53 +1,22 @@
-index="ise-cloud-cdossi" sourcetype="cisco:esa" cf_id_hebwo="Consolidated Log Event"
-| eval domain_list=mvappend("abbey.co.uk","abbey.com","abbeyforintermediaries.com","bfin.nl","accepterad.dk","acceptemail.dk",
-                            "aegonsantander.es","agentes.bancosantander.es","agentes.santanderconsumer.com",
-                            "agentesfinancierosantander.es")
-                            
-* FILTRADO DE DOMINIOS TANTO EN SRC COMO EN RECIPIENT *
-| eval src_domain=src_user_domain
-| eval rcpt_domain=if(isnull(recipient_domain) OR recipient_domain="", "", recipient_domain)
+index="ise-cloud-cdossi" sourcetype="cisco:esa"
 
-* NORMALIZACIÓN DEL DOMINIO RELEVANTE SEGÚN SEA IN u OUT *
-| eval direction = case(
-        src_domain IN domain_list, "OUT",
-        rcpt_domain IN domain_list, "IN",
-        true(), "UNKNOWN"
-    )
-
+* Selección del dominio según IN/OUT *
 | eval domain = case(
-        direction="OUT", src_domain,
-        direction="IN", rcpt_domain,
-        true(), null()
+        cs1="OUT", src_domain,
+        cs1="IN", recipient_domain
     )
 
-* CONTADORES SEPARADOS
-| eval IN = if(direction=="IN", 1, 0)
-| eval OUT = if(direction=="OUT", 1, 0)
+* Normalizar dirección *
+| eval direction = if(cs1="IN","IN","OUT")
 
-* SUMATORIO POR DOMINIO
-| stats sum(IN) AS IN sum(OUT) AS OUT BY domain
+* Conteo por dominio y dirección (IN/OUT) *
+| stats count BY domain direction
 
-* ORDENAR LA TABLA
-| sort domain
+* Convertimos direction a columnas IN y OUT *
+| eval IN = if(direction="IN", count, 0)
+| eval OUT = if(direction="OUT", count, 0)
 
-
-
-index="ise-cloud-cdossi" sourcetype="cisco:esa" cf_id_hebwo="Consolidated Log Event"
-
-* Seleccionar dominio en función de IN/OUT *
-| eval domain = case(
-        cs1="OUT", src_user_domain,
-        cs1="IN", recipient_domain,
-        true(), null()
-    )
-
-* Contadores separados *
-| eval IN = if(cs1="IN", 1, 0)
-| eval OUT = if(cs1="OUT", 1, 0)
-
-* Agrupación final *
+* Agrupación final para que solo quede una fila por dominio *
 | stats sum(IN) as IN sum(OUT) as OUT by domain
 
 | sort domain
-
-
