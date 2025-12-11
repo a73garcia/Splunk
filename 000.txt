@@ -29,3 +29,25 @@ index="ise-cloud-cdossi" sourcetype="cisco:esa" cf_id_hebwo="Consolidated Log Ev
 
 * ORDENAR LA TABLA
 | sort domain
+
+
+
+index="ise-cloud-cdossi" sourcetype="cisco:esa" cf_id_hebwo="Consolidated Log Event"
+
+* Seleccionar dominio en función de IN/OUT *
+| eval domain = case(
+        cs1="OUT", src_user_domain,
+        cs1="IN", recipient_domain,
+        true(), null()
+    )
+
+* Contadores separados *
+| eval IN = if(cs1="IN", 1, 0)
+| eval OUT = if(cs1="OUT", 1, 0)
+
+* Agrupación final *
+| stats sum(IN) as IN sum(OUT) as OUT by domain
+
+| sort domain
+
+
