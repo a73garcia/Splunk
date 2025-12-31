@@ -7,6 +7,7 @@ import pandas as pd
 from datetime import date, datetime
 from dateutil.relativedelta import relativedelta
 from openpyxl import load_workbook
+from openpyxl.cell.cell import MergedCell
 
 # =========================
 # CONFIG
@@ -32,50 +33,71 @@ def next_month_name(month_name: str) -> str:
 def replace_month_with_next(value):
     if value is None:
         return value
-
     if isinstance(value, (datetime, date)):
         return next_month_name(MONTHS[value.month - 1])
-
     if isinstance(value, str):
         m = MONTH_PATTERN.search(value)
         if not m:
             return value
         found = m.group(1)
         return MONTH_PATTERN.sub(next_month_name(found), value, count=1)
-
     return value
+
+# =========================
+# Helpers: celdas combinadas
+# =========================
+def _top_left_cell(ws, row, col):
+    c = ws.cell(row=row, column=col)
+    if isinstance(c, MergedCell):
+        for rng in ws.merged_cells.ranges:
+            if c.coordinate in rng:
+                return ws.cell(row=rng.min_row, column=rng.min_col), (rng.min_row, rng.min_col)
+    return c, (row, col)
 
 # =========================
 # 1) Modificar "Trimestral"
 # =========================
-def update_trimestral(excel_path: str) -> None:
+def update_trimestral(excel_path: str):
     wb = load_workbook(excel_path)
     if SHEET_TRIMESTRAL not in wb.sheetnames:
         raise ValueError(f"No existe la hoja '{SHEET_TRIMESTRAL}'. Hojas: {wb.sheetnames}")
     ws = wb[SHEET_TRIMESTRAL]
 
-    # Para leer solo valores (resultado cacheado de fórmulas)
+    # Para leer SOLO valores (resultado cacheado de fórmulas)
     wb_vals = load_workbook(excel_path, data_only=True)
     ws_vals = wb_vals[SHEET_TRIMESTRAL]
 
-    # A2:A10 -> mes siguiente (EN)
+    # A2:A10 -> mes siguiente (EN) evitando merged-cells
+    written = set()
     for r in range(2, 11):
-        ws[f"A{r}"].value = replace_month_with_next(ws[f"A{r}"].value)
+        cell_w, key = _top_left_cell(ws, r, 1)  # col 1 = A
+        if key in written:
+            continue
+        written.add(key)
+        cell_w.value = replace_month_with_next(cell_w.value)
 
-    # C5:E10 -> C2:E7 (SIEMPRE valores, NUNCA fórmulas)
-    cols = ["C", "D", "E"]
+    # Copiar C5:E10 -> C2:E7 SOLO VALORES (nunca fórmulas), evitando merged-cells
+    cols = [3, 4, 5]  # C, D, E
+    dst_written = set()
     missing_cached = []
 
-    for i in range(6):  # filas 5..10 -> 2..7
+    for i in range(6):
         src_row = 5 + i
         dst_row = 2 + i
-        for col in cols:
-            v = ws_vals[f"{col}{src_row}"].value  # valor calculado/cacheado
+        for c in cols:
+            src_cell, _ = _top_left_cell(ws_vals, src_row, c)
+            v = src_cell.value  # resultado cacheado (valor), nunca fórmula
+
+            dst_cell, dst_key = _top_left_cell(ws, dst_row, c)
+            if dst_key in dst_written:
+                continue
+            dst_written.add(dst_key)
+
             if v is None:
-                ws[f"{col}{dst_row}"].value = None
-                missing_cached.append(f"{col}{src_row}")
+                dst_cell.value = None
+                missing_cached.append(src_cell.coordinate)
             else:
-                ws[f"{col}{dst_row}"].value = v
+                dst_cell.value = v
 
     wb.save(excel_path)
 
@@ -88,10 +110,20 @@ def update_trimestral(excel_path: str) -> None:
         )
 
 # =========================
-# 2) Leer CSVs y volcar a "Datos"
+# 2) CSVs -> DataFrame (org y cluster por '_')
 # =========================
+def parse_org_cluster(filename: str):
+    """
+    Formato: ORGANIZACION_CLUSTER_loquesea.csv
+    Devuelve: (organizacion, cluster)
+    """
+    base = os.path.splitext(os.path.basename(filename))[0].strip("_ ").strip()
+    parts = [p for p in base.split("_") if p]  # elimina vacíos
+    organizacion = parts[0].strip() if len(parts) >= 1 else ""
+    id_cluster = parts[1].strip() if len(parts) >= 2 else ""
+    return organizacion, id_cluster
+
 def build_df_from_csvs(csv_dir: str) -> pd.DataFrame:
-    # Fecha del 1º día del mes anterior (formato español) como tu script
     fecha_mes_anterior = (date.today().replace(day=1) - relativedelta(months=1)).strftime("%d/%m/%Y")
 
     columnas_finales = [
@@ -112,28 +144,22 @@ def build_df_from_csvs(csv_dir: str) -> pd.DataFrame:
         ruta = os.path.join(csv_dir, archivo)
 
         try:
-            # Encabezado fila 1, saltar fila 2 (como tu script)
             df = pd.read_csv(ruta, header=0, skiprows=[1])
 
-            # Asegurar que existe la fila 3 (índice 2)
+            # Asegurar fila 3 (índice 2)
             if len(df) < 3:
                 empty_row = pd.Series([0] * len(df.columns), index=df.columns)
                 while len(df) < 3:
                     df = pd.concat([df, pd.DataFrame([empty_row])], ignore_index=True)
 
             if df.iloc[2].isnull().all():
-                empty_row = pd.Series([0] * len(df.columns), index=df.columns)
-                df.iloc[2] = empty_row
+                df.iloc[2] = pd.Series([0] * len(df.columns), index=df.columns)
 
-            # Extraer Organización e ID_Cluster del nombre del archivo: ORG-CLUSTER.csv
-            base = os.path.splitext(archivo)[0]
-            parts = base.split("-")
-            organizacion = parts[0].strip() if len(parts) >= 1 else ""
-            id_cluster = parts[1].strip() if len(parts) >= 2 else ""
+            organizacion, id_cluster = parse_org_cluster(archivo)
 
             fila = {
                 "ID_REG": id_reg,
-                "ID_ORG": id_reg,  # mantengo tu lógica
+                "ID_ORG": id_reg,
                 "Fecha": fecha_mes_anterior,
                 "Organización": organizacion,
                 "ID_Cluster": id_cluster,
