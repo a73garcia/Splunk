@@ -124,10 +124,18 @@ def parse_org_cluster(filename: str):
     return organizacion, id_cluster
 
 def build_df_from_csvs(csv_dir: str) -> pd.DataFrame:
+    # Fecha del 1º día del mes anterior (formato español)
     fecha_mes_anterior = (date.today().replace(day=1) - relativedelta(months=1)).strftime("%d/%m/%Y")
 
     columnas_finales = [
         "ID_REG", "ID_ORG", "Fecha", "Organización", "ID_Cluster",
+        "Total Attempted Messages", "Total Threat Messages", "Clean Messages",
+        "Stopped by Reputation Filtering", "Stopped as Invalid Recipients",
+        "Spam Detected", "Virus Detected", "Detected by Advanced Malware Protection",
+        "Stopped by Content Filter", "Messages with Malicious URLs", "Stopped by DMARC"
+    ]
+
+    metric_cols = [
         "Total Attempted Messages", "Total Threat Messages", "Clean Messages",
         "Stopped by Reputation Filtering", "Stopped as Invalid Recipients",
         "Spam Detected", "Virus Detected", "Detected by Advanced Malware Protection",
@@ -144,6 +152,7 @@ def build_df_from_csvs(csv_dir: str) -> pd.DataFrame:
         ruta = os.path.join(csv_dir, archivo)
 
         try:
+            # Encabezado fila 1, saltar fila 2
             df = pd.read_csv(ruta, header=0, skiprows=[1])
 
             # Asegurar fila 3 (índice 2)
@@ -176,6 +185,13 @@ def build_df_from_csvs(csv_dir: str) -> pd.DataFrame:
                 "Messages with Malicious URLs": df.get("Messages with Malicious URLs", pd.Series([0])).iloc[0],
                 "Stopped by DMARC": df.get("Stopped by DMARC", pd.Series([0])).iloc[0],
             }
+
+            # --- REGLA ESPECIAL: organización Global -> solo conservar 2 métricas ---
+            if organizacion.strip().lower() == "global":
+                keep = {"Messages with Malicious URLs", "Stopped by DMARC"}
+                for col in metric_cols:
+                    if col not in keep:
+                        fila[col] = 0  # usa None si prefieres celdas en blanco
 
             dataframes.append(pd.DataFrame([fila]))
             id_reg += 1
