@@ -98,25 +98,59 @@ index="ise-cloud-cdossi" sourcetype="cisco:esa"
 
 
 
-... tu búsqueda base ...
-| eval Sender=suser
-| eval Recipient=duser
-| eval accion=lower(act)
+index=siem-cloud-ciscosea Accion="BOUNCE"
+| eval is_rbl = if(match(Reputacion, "(?i)blacklist|blacklisted|rbl|dnsbl|spamhaus|spamcop|barracuda|listed|poor"), 1, 0)
+| stats count AS Total, sum(is_rbl) AS RBL, round((sum(is_rbl)*100/count),2) AS Pct_RBL by Domain
+| where RBL > 0
+| sort - RBL
 
-| eval accion_norm=case(
-    match(accion,"deliver|delivered|accepted|success|sent|ok"), "Entregado",
-    match(accion,"reject|rejected|bounce|bounced|blocked|deny|dropped|failed"), "Rechazado",
-    true(), "Otros"
-)
+index=siem-cloud-ciscosea Accion="BOUNCE"
+| eval is_rbl = if(match(Status, "(?i)blacklist|blacklisted|dnsbl|rbl|spamhaus|barracuda|spamcop|blocked|policy"), 1, 0)
+| stats count AS Total, sum(is_rbl) AS RBL, round((sum(is_rbl)*100/count),2) AS Pct_RBL by Domain
+| where RBL > 0
+| sort - RBL
 
-| stats
-    count as Total
-    sum(eval(accion_norm="Entregado")) as Entregados
-    sum(eval(accion_norm="Rechazado")) as Rechazados
-  by Sender Recipient
+index=siem-cloud-ciscosea Accion="BOUNCE"
+| eval is_rbl = if(
+      match(Reputacion, "(?i)blacklist|blacklisted|rbl|dnsbl|spamhaus|spamcop|barracuda|listed|poor")
+      OR match(Status, "(?i)blacklist|rbl|dnsbl|spamhaus|spamcop|barracuda|blocked|policy")
+    , 1, 0)
+| stats count AS Total, sum(is_rbl) AS RBL, round((sum(is_rbl)*100/count),2) AS Pct_RBL 
+  by Recipient, Domain
+| where RBL > 0 AND Total > 2
+| sort - Pct_RBL, RBL
 
-| eval "% Entregados"=round(100*Entregados/Total,2)
-| eval "% Rechazados"=round(100*Rechazados/Total,2)
-| sort - Total
+
+index=siem-cloud-ciscosea Accion="BOUNCE"
+| eval is_rbl = if(
+      match(Reputacion, "(?i)blacklist|blacklisted|rbl|dnsbl|spamhaus|spamcop|barracuda|listed|poor")
+      OR match(Status, "(?i)blacklist|rbl|dnsbl|spamhaus|spamcop|barracuda|blocked|policy")
+    , 1, 0)
+| stats count AS Total, sum(is_rbl) AS RBL, round((sum(is_rbl)*100/count),2) AS Pct_RBL 
+  by Sender
+| where RBL > 0
+| sort - RBL
+
+index=siem-cloud-ciscosea Accion="BOUNCE"
+| eval is_rbl = if(
+      match(Reputacion, "(?i)blacklist|blacklisted|rbl|dnsbl|spamhaus|spamcop|barracuda|listed|poor")
+      OR match(Status, "(?i)blacklist|rbl|dnsbl|spamhaus|spamcop|barracuda|blocked|policy")
+    , 1, 0)
+| bin _time span=1d
+| stats count AS Total, sum(is_rbl) AS RBL by _time
+| eval Pct_RBL=round((RBL*100/Total),2)
+| sort _time
+
+
+
+
+
+
+
+
+
+
+
+
 
 
