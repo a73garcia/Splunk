@@ -142,10 +142,20 @@ index=siem-cloud-ciscosea Accion="BOUNCE"
 | sort _time
 
 
+index=siem-cloud-ciscosea host="*.hc5532-55.iphmx.com" cef_6_header="*Consolidated Log Event*"
+| eval is_rbl = if(match(cs6, "(?i)blacklist|blacklisted|rbl|dnsbl|spamhaus|spamcop|barracuda|listed|poor"), 1, 0)
+| stats count AS Total sum(is_rbl) AS RBL by src_user_domain
+| eval Pct_RBL = round((RBL*100/Total), 2)
+| where RBL > 0
+| sort - RBL
 
 
-
-
+index=siem-cloud-ciscosea cef_6_header="*Consolidated Log Event*"
+| eval is_rbl = if(match(cs6, "(?i)blacklist|blacklisted|rbl|dnsbl|spamhaus|spamcop|barracuda|listed|poor"), 1, 0)
+| stats count AS Total sum(is_rbl) AS RBL by Recipient, Domain
+| eval Pct_RBL = round((RBL*100/Total),2)
+| where RBL > 0 AND Total >= 3
+| sort - Pct_RBL, -RBL
 
 
 
