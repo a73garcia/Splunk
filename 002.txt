@@ -1,68 +1,99 @@
-index=mail sourcetype=proofpoint*  direction=inbound
-/* 1. AJUSTA lo anterior a tu índice/sourcetype/campo de dirección */
+index=TU_INDEX sourcetype=TU_SOURCETYPE earliest=-30d
+/* 1. Correo entrante únicamente (ajusta si tienes un campo de inbound/outbound) */
+| where connection.protocol="smtp"  /* o direction="inbound" si lo tienes */
 
-/* 2. Clasificación por categoría tipo “Incoming Mail Summary” */
+/* 2. Flags auxiliares usando los campos que tienes en la captura */
+| eval src_ip           = connection.ip,
+       sender           = envelope.from,
+       final_disp       = filter.disposition,
+
+       /* DMARC: hay varios resultados en alignment{}, buscamos cualquier 'fail' */
+       dmarc_fail       = if(mvfind(filter.modules.dmarc.alignment{}.result,"fail")!=-1, 1, 0),
+
+       /* Ejemplos de cómo marcar spam, virus, bulk, etc. AJUSTA valores */
+       is_spam          = if(final_disp=="SPAM_DISP"          OR match(final_disp,"spam"), 1, 0),
+       is_virus         = if(final_disp=="VIRUS_DISP"         OR match(final_disp,"virus"), 1, 0),
+       is_bulk          = if(final_disp=="BULK_DISP"          OR match(final_disp,"bulk"), 1, 0),
+       is_marketing     = if(final_disp=="MARKETING_DISP"     OR match(final_disp,"marketing"), 1, 0),
+       is_social        = if(final_disp=="SOCIAL_DISP"        OR match(final_disp,"social"), 1, 0),
+       is_clean         = if(final_disp=="DELIVERED_DISP"     OR final_disp=="delivered", 1, 0)
+
+/* 3. Para trabajar con módulos (IP rep, domain rep, content filter, AMP, etc.) */
+| mvexpand filter.actions{} 
+| eval module = filter.actions{}.module,
+       action = filter.actions{}.action
+
+/* 4. Clasificación por categoría tipo “Incoming Mail Summary” */
 | eval category = case(
-    /* BLOQUEOS POR REPUTACIÓN */
-    ip_reputation=="blocked" OR match(reason, "IP reputation"), 
-        "Stopped by IP Reputation Filtering",
+    /* Reputación IP: AJUSTA valores de module/action a los que hayas visto */
+    module=="ipr"             AND action=="reject",         "Stopped by IP Reputation Filtering",
 
-    domain_reputation=="blocked" OR match(reason, "Domain reputation"),
-        "Stopped by Domain Reputation Filtering",
+    /* Reputación de dominio */
+    module=="domain_reputation" AND action=="reject",       "Stopped by Domain Reputation Filtering",
 
-    /* RECIPIENTE INVÁLIDO */
-    recipient_status=="invalid" OR smtp_reply LIKE "550 5.1.1%" ,
-        "Stopped as Invalid Recipients",
+    /* Destinatario inválido: usa lo que veas en disposition o en algún módulo */
+    match(final_disp,"invalid_recipient") 
+         OR match(action,"invalid_rcpt"),                   "Stopped as Invalid Recipients",
 
     /* SPAM */
-    spam_status=="spam" OR pp_threat=="spam",
-        "Spam Detected",
+    is_spam=1,                                              "Spam Detected",
 
     /* VIRUS / MALWARE */
-    malware_status=="infected" OR pp_threat=="virus",
-        "Virus Detected",
+    is_virus=1 OR module=="av" AND action=="reject",        "Virus Detected",
 
-    /* AMP / SANDBOX */
-    sandbox_action=="blocked" OR amp_disposition=="blocked",
-        "Detected by Advanced Malware Protection",
+    /* AMP / malware avanzado */
+    module=="sandbox" AND action=="reject",                 "Detected by Advanced Malware Protection",
 
-    /* URLs MALICIOSAS */
-    url_threat=="malicious" OR like(url_classifier, "malicious%"),
-        "Messages with Malicious URLs",
+    /* URLs maliciosas */
+    module=="urlDefense" AND action=="reject",              "Messages with Malicious URLs",
 
     /* CONTENT FILTER */
-    content_filter_action=="blocked" OR policy=="content_filter",
-        "Stopped by Content Filter",
+    module=="content" AND action=="reject",                 "Stopped by Content Filter",
 
     /* DMARC */
-    dmarc_disposition=="reject" OR dmarc_result=="fail",
-        "Stopped by DMARC",
+    dmarc_fail=1 AND (match(final_disp,"dmarc") OR match(action,"reject")), 
+                                                           "Stopped by DMARC",
 
-    /* GRAYMAIL: marketing / social / bulk */
-    graymail_category=="marketing",
-        "Marketing Messages",
-    graymail_category=="social",
-        "Social Networking Messages",
-    graymail_category=="bulk",
-        "Bulk Messages",
+    /* Graymails */
+    is_marketing=1,                                         "Marketing Messages",
+    is_social=1,                                            "Social Networking Messages",
+    is_bulk=1,                                              "Bulk Messages",
 
-    /* MENSAJE LIMPIO ENTREGADO */
-    final_action=="delivered" OR (delivery_status=="delivered" AND spam_status=="not-spam" AND malware_status=="clean"),
-        "Clean Messages",
+    /* Mensajes limpios */
+    is_clean=1,                                             "Clean Messages",
 
-    /* TODO LO DEMÁS */
-    true(),
-        "Other"
+    /* Resto */
+    true(),                                                 "Other"
 )
 
-/* 3. Conteo por categoría */
+/* 5. Como hemos mvexpand, nos quedamos con UNA categoría por mensaje 
+   usando prioridad (IP rep > dominio > spam > virus > graymail > clean...) */
+| eval category_priority = case(
+        category=="Stopped by IP Reputation Filtering", 1,
+        category=="Stopped by Domain Reputation Filtering", 2,
+        category=="Stopped as Invalid Recipients", 3,
+        category=="Spam Detected", 4,
+        category=="Virus Detected", 5,
+        category=="Detected by Advanced Malware Protection", 6,
+        category=="Messages with Malicious URLs", 7,
+        category=="Stopped by Content Filter", 8,
+        category=="Stopped by DMARC", 9,
+        category IN ("Marketing Messages","Social Networking Messages","Bulk Messages"), 10,
+        category=="Clean Messages", 11,
+        true(), 99)
+
+/* Necesitas un identificador de mensaje. Usa el que tengas: messageId, queueId, etc. */
+| eventstats min(category_priority) AS minprio BY filter.messageId
+| where category_priority=minprio
+
+/* 6. Conteo por categoría */
 | stats count AS Messages BY category
 
-/* 4. Totales y % */
+/* 7. Totales y porcentajes */
 | eventstats sum(Messages) AS Total
 | eval Percent = round(Messages*100/Total, 1)
 
-/* 5. Cálculo de totales de amenazas y graymail */
+/* 8. Totales de amenazas y graymail como en el informe de Cisco */
 | eval ThreatMessages = case(
         category IN ("Stopped by IP Reputation Filtering",
                      "Stopped by Domain Reputation Filtering",
@@ -82,7 +113,6 @@ index=mail sourcetype=proofpoint*  direction=inbound
 
 | eventstats sum(ThreatMessages) AS TotalThreat sum(GraymailMessages) AS TotalGraymail
 
-/* 6. Añadir filas agregadas tipo informe de Cisco */
 | appendpipe [
     stats values(TotalThreat) AS Messages values(Total) AS Total
     | eval category="Total Threat Messages"
@@ -98,18 +128,5 @@ index=mail sourcetype=proofpoint*  direction=inbound
     | eval category="Total Attempted Messages", Percent=100
 ]
 
-/* 7. Dejar solo columnas finales y ordenar */
 | fields category Percent Messages
-| sort category
-
-
-
-
-index=mail sourcetype=proofpoint* | head 20
-
-
-
-index=mail sourcetype=proofpoint* direction=inbound spam_status="spam"
-| stats count BY spam_status, policy, reason
-
-
+| sort -Messages
