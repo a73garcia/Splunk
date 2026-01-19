@@ -1,0 +1,115 @@
+index=mail sourcetype=proofpoint*  direction=inbound
+/* 1. AJUSTA lo anterior a tu índice/sourcetype/campo de dirección */
+
+/* 2. Clasificación por categoría tipo “Incoming Mail Summary” */
+| eval category = case(
+    /* BLOQUEOS POR REPUTACIÓN */
+    ip_reputation=="blocked" OR match(reason, "IP reputation"), 
+        "Stopped by IP Reputation Filtering",
+
+    domain_reputation=="blocked" OR match(reason, "Domain reputation"),
+        "Stopped by Domain Reputation Filtering",
+
+    /* RECIPIENTE INVÁLIDO */
+    recipient_status=="invalid" OR smtp_reply LIKE "550 5.1.1%" ,
+        "Stopped as Invalid Recipients",
+
+    /* SPAM */
+    spam_status=="spam" OR pp_threat=="spam",
+        "Spam Detected",
+
+    /* VIRUS / MALWARE */
+    malware_status=="infected" OR pp_threat=="virus",
+        "Virus Detected",
+
+    /* AMP / SANDBOX */
+    sandbox_action=="blocked" OR amp_disposition=="blocked",
+        "Detected by Advanced Malware Protection",
+
+    /* URLs MALICIOSAS */
+    url_threat=="malicious" OR like(url_classifier, "malicious%"),
+        "Messages with Malicious URLs",
+
+    /* CONTENT FILTER */
+    content_filter_action=="blocked" OR policy=="content_filter",
+        "Stopped by Content Filter",
+
+    /* DMARC */
+    dmarc_disposition=="reject" OR dmarc_result=="fail",
+        "Stopped by DMARC",
+
+    /* GRAYMAIL: marketing / social / bulk */
+    graymail_category=="marketing",
+        "Marketing Messages",
+    graymail_category=="social",
+        "Social Networking Messages",
+    graymail_category=="bulk",
+        "Bulk Messages",
+
+    /* MENSAJE LIMPIO ENTREGADO */
+    final_action=="delivered" OR (delivery_status=="delivered" AND spam_status=="not-spam" AND malware_status=="clean"),
+        "Clean Messages",
+
+    /* TODO LO DEMÁS */
+    true(),
+        "Other"
+)
+
+/* 3. Conteo por categoría */
+| stats count AS Messages BY category
+
+/* 4. Totales y % */
+| eventstats sum(Messages) AS Total
+| eval Percent = round(Messages*100/Total, 1)
+
+/* 5. Cálculo de totales de amenazas y graymail */
+| eval ThreatMessages = case(
+        category IN ("Stopped by IP Reputation Filtering",
+                     "Stopped by Domain Reputation Filtering",
+                     "Stopped as Invalid Recipients",
+                     "Spam Detected",
+                     "Virus Detected",
+                     "Detected by Advanced Malware Protection",
+                     "Messages with Malicious URLs",
+                     "Stopped by Content Filter",
+                     "Stopped by DMARC"), Messages,
+        true(), 0),
+       GraymailMessages = case(
+        category IN ("Marketing Messages",
+                     "Social Networking Messages",
+                     "Bulk Messages"), Messages,
+        true(), 0)
+
+| eventstats sum(ThreatMessages) AS TotalThreat sum(GraymailMessages) AS TotalGraymail
+
+/* 6. Añadir filas agregadas tipo informe de Cisco */
+| appendpipe [
+    stats values(TotalThreat) AS Messages values(Total) AS Total
+    | eval category="Total Threat Messages"
+    | eval Percent = round(Messages*100/Total,1)
+]
+| appendpipe [
+    stats values(TotalGraymail) AS Messages values(Total) AS Total
+    | eval category="Total Graymails"
+    | eval Percent = round(Messages*100/Total,1)
+]
+| appendpipe [
+    stats values(Total) AS Messages
+    | eval category="Total Attempted Messages", Percent=100
+]
+
+/* 7. Dejar solo columnas finales y ordenar */
+| fields category Percent Messages
+| sort category
+
+
+
+
+index=mail sourcetype=proofpoint* | head 20
+
+
+
+index=mail sourcetype=proofpoint* direction=inbound spam_status="spam"
+| stats count BY spam_status, policy, reason
+
+
