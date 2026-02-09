@@ -1,0 +1,211 @@
+Plan de Migración CES APP → Proofpoint
+
+Tráfico Saliente de Aplicaciones
+
+------------------------------------------------------------------------
+
+1. Objetivo
+
+Migrar el tráfico SMTP saliente generado por aplicaciones corporativas
+(APP) que actualmente enruta a través de CES APP, hacia la pasarela de
+seguridad Proofpoint Email Protection, garantizando:
+
+-   Continuidad del servicio
+-   Integridad del correo electrónico
+-   Cumplimiento de políticas de seguridad
+-   Preservación de reputación del dominio
+-   Minimización del impacto en sistemas emisores
+-   Validación de autenticación y cumplimiento normativo
+
+------------------------------------------------------------------------
+
+2. Alcance
+
+2.1 Incluido
+
+-   Routing SMTP saliente desde aplicaciones
+-   Configuración Smart Host Proofpoint
+-   Configuración autenticación SMTP / TLS
+-   Configuración políticas outbound
+-   Actualización SPF / DKIM / DMARC
+-   Validación entrega externa
+-   Validación entrega Microsoft 365
+-   Migración progresiva por organización
+-   Monitorización del tráfico post-migración
+
+------------------------------------------------------------------------
+
+2.2 Excluido
+
+-   Tráfico SMTP entrante
+-   Cambios en buzones Exchange Online
+-   Migración de reglas inbound
+-   Cambios funcionales en aplicaciones
+-   Cambios en infraestructura de usuario final
+
+------------------------------------------------------------------------
+
+3. Arquitectura
+
+3.1 Arquitectura Actual
+
+Aplicaciones → CES APP → Internet / Microsoft 365 / Destinos externos
+
+3.2 Arquitectura Objetivo
+
+Aplicaciones → Proofpoint → Internet / Microsoft 365 / Destinos externos
+
+------------------------------------------------------------------------
+
+4. Inventario Inicial
+
+4.1 Inventario de Organizaciones
+
+Organización | CISO | Contacto CISO | Ruta SNOW | Equipo CEA |
+Observaciones |
+
+4.2 Inventario de Aplicaciones Emisoras
+
+Organización | Aplicación | IP Origen | Volumen | Criticidad |
+Autenticación SMTP | TLS | Responsable Técnico |
+
+------------------------------------------------------------------------
+
+5. Preparación Técnica
+
+5.1 Configuración en Proofpoint
+
+-   Registro del dominio en Proofpoint
+-   Configuración políticas outbound
+-   Configuración reputación dominio
+-   Definición IP emisoras permitidas
+-   Autenticación SMTP
+-   TLS obligatorio
+-   Políticas DLP
+-   Anti-malware
+-   Sandboxing
+
+------------------------------------------------------------------------
+
+6. Configuración Aplicaciones
+
+-   Cambio Smart Host SMTP
+-   Configuración TLS
+-   Configuración autenticación SMTP
+-   Validación certificados
+-   Whitelisting IPs emisoras
+
+------------------------------------------------------------------------
+
+7. Plan de Migración por Fases
+
+Fase 1 – Discovery
+
+Inventario completo aplicaciones emisoras.
+
+Fase 2 – Preparación Técnica
+
+Configuración Proofpoint y DNS.
+
+Fase 3 – Piloto
+
+Migración aplicaciones bajo impacto.
+
+Fase 4 – Migración Escalonada
+
+Migración por criticidad.
+
+Fase 5 – Validación Post Migración
+
+Monitorización 48-72 horas.
+
+------------------------------------------------------------------------
+
+8. Pruebas Técnicas
+
+-   Pruebas funcionales
+-   Pruebas seguridad SPF, DKIM, DMARC
+-   Pruebas rendimiento
+
+------------------------------------------------------------------------
+
+9. Monitorización
+
+-   Consola Proofpoint
+-   Message Trace Microsoft 365
+-   SIEM / Splunk
+-   Métricas colas SMTP
+
+------------------------------------------------------------------------
+
+10. Plan de Contingencia
+
+-   Rollback Smart Host
+-   Rollback DNS
+-   Monitorización intensiva
+
+------------------------------------------------------------------------
+
+11. Gestión de Riesgos
+
+-   Error SPF
+-   Fallo TLS
+-   APP sin autenticación
+-   Reputación dominio
+-   Saturación SMTP
+
+------------------------------------------------------------------------
+
+12. Criterios de Éxito
+
+-   Correos entregados correctamente
+-   Autenticación validada
+-   Sin impacto aplicaciones
+-   Confirmación equipos responsables
+
+------------------------------------------------------------------------
+
+13. Desmantelamiento CES APP
+
+Realizar solo tras validar cero tráfico saliente.
+
+------------------------------------------------------------------------
+
+14. Matriz RACI
+
+A = Accountable
+R = Responsible
+C = Consulted
+I = Informed
+
+------------------------------------------------------------------------
+
+15. Checklist Operativo
+
+Pre-Migración
+
+-   Inventario validado
+-   Configuración Proofpoint
+-   SPF / DKIM / TLS validado
+
+Durante Migración
+
+-   Cambio Smart Host
+-   Validación envío correo
+
+Post-Migración
+
+-   Validación reputación dominio
+-   Monitorización colas SMTP
+
+------------------------------------------------------------------------
+
+16. Buenas Prácticas
+
+-   Migrar primero aplicaciones no críticas
+-   Mantener CES en paralelo durante piloto
+-   Monitorizar reputación dominio
+-   Controlar volumen por APP
+-   Documentar autenticaciones heredadas
+
+------------------------------------------------------------------------
