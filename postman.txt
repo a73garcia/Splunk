@@ -1,0 +1,225 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import os
+import re
+import csv
+from dataclasses import dataclass
+from typing import Optional, List, Tuple, Dict
+from datetime import datetime
+import requests
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+# -------------------------
+# Config
+# -------------------------
+CREDENTIALS_FILE = "credentials.env"  # mismo directorio del script
+SERVER_PATTERN = "https://dh529-esa{idx}.cs32.iphmx.com"
+START_IDX = 1
+END_IDX = 20
+TIMEOUT_SECONDS = 12
+MAX_WORKERS = 10
+
+
+@dataclass
+class Result:
+    timestamp: str
+    server: str
+    etiqueta: str
+    status: str
+    gauge_name: str
+    current: str
+    error: Optional[str] = None
+
+
+def script_dir() -> str:
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def load_env_file(path: str) -> Dict[str, str]:
+    """
+    Lee un .env simple: KEY=VALUE por línea. Ignora comentarios y líneas vacías.
+    """
+    data: Dict[str, str] = {}
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"No existe el archivo de credenciales: {path}")
+
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            if "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            data[k.strip()] = v.strip()
+    return data
+
+
+def get_etiqueta(server_name: str) -> str:
+    lower = server_name.lower()
+    if "dh529" in lower:
+        return "Europa"
+    return "Otro"
+
+
+def server_name_from_url(base_url: str) -> str:
+    base_url = re.sub(r"^https?://", "", base_url)
+    return base_url.split("/")[0]
+
+
+def find_msgs_in_work_queue(xml_text: str) -> Tuple[str, str]:
+    """
+    Devuelve (system_status, current_value_str).
+    Si no encuentra el gauge, devuelve ('<status>', 'N/A').
+    """
+    root = ET.fromstring(xml_text)
+
+    system_status = "No disponible"
+    sys_node = root.find(".//system")
+    if sys_node is not None:
+        system_status = sys_node.attrib.get("status", system_status)
+
+    for gauge in root.findall(".//gauge"):
+        if gauge.attrib.get("name") == "msgs_in_work_queue":
+            current_node = gauge.find("./current")
+            current_val = current_node.text.strip() if (current_node is not None and current_node.text) else "N/A"
+            return system_status, current_val
+
+    return system_status, "N/A"
+
+
+def to_number(val: str) -> float:
+    try:
+        return float(val)
+    except Exception:
+        return 0.0
+
+
+def fetch_one(session: requests.Session, base_url: str, auth: Tuple[str, str], timestamp: str) -> Result:
+    url = f"{base_url}/xml/status"
+    sname = server_name_from_url(base_url)
+    etiqueta = get_etiqueta(sname)
+
+    headers = {"Accept": "application/xml"}
+
+    try:
+        r = session.get(url, headers=headers, auth=auth, timeout=TIMEOUT_SECONDS)
+        if r.status_code != 200:
+            return Result(
+                timestamp=timestamp,
+                server=sname,
+                etiqueta=etiqueta,
+                status="Error en conexión",
+                gauge_name="Error",
+                current=f"HTTP {r.status_code}",
+                error=f"HTTP {r.status_code}",
+            )
+
+        system_status, current_val = find_msgs_in_work_queue(r.text)
+        return Result(
+            timestamp=timestamp,
+            server=sname,
+            etiqueta=etiqueta,
+            status=system_status,
+            gauge_name="msgs_in_work_queue",
+            current=current_val,
+        )
+
+    except Exception as e:
+        return Result(
+            timestamp=timestamp,
+            server=sname,
+            etiqueta=etiqueta,
+            status="Error en conexión",
+            gauge_name="Error",
+            current=str(e),
+            error=str(e),
+        )
+
+
+def print_table(results: List[Result]) -> None:
+    headers = ["Timestamp", "Servidor", "Etiqueta", "Status", "Gauge", "Encolados"]
+    rows = [
+        [r.timestamp, r.server, r.etiqueta, r.status, r.gauge_name, r.current]
+        for r in results
+    ]
+
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(str(cell)))
+
+    def fmt_row(vals):
+        return " | ".join(str(v).ljust(widths[i]) for i, v in enumerate(vals))
+
+    sep = "-+-".join("-" * w for w in widths)
+
+    print(fmt_row(headers))
+    print(sep)
+    for row in rows:
+        print(fmt_row(row))
+
+
+def save_csv(results: List[Result], out_path: str) -> None:
+    fieldnames = ["timestamp", "server", "etiqueta", "status", "gauge_name", "current", "error"]
+    with open(out_path, "w", newline="", encoding="utf-8") as f:
+        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w.writeheader()
+        for r in results:
+            w.writerow({
+                "timestamp": r.timestamp,
+                "server": r.server,
+                "etiqueta": r.etiqueta,
+                "status": r.status,
+                "gauge_name": r.gauge_name,
+                "current": r.current,
+                "error": r.error or "",
+            })
+
+
+def main() -> int:
+    # Timestamp único para esta ejecución (para CSV y columna)
+    now = datetime.now()
+    run_ts_col = now.strftime("%Y-%m-%d %H:%M:%S")
+    run_ts_file = now.strftime("%Y%m%d_%H%M%S")
+
+    # Cargar credenciales desde archivo en misma carpeta
+    cred_path = os.path.join(script_dir(), CREDENTIALS_FILE)
+    creds = load_env_file(cred_path)
+
+    username = creds.get("GLOBAL_USERNAME")
+    password = creds.get("GLOBAL_PASSWORD")
+    if not username or not password:
+        print("Faltan GLOBAL_USERNAME y/o GLOBAL_PASSWORD en credentials.env")
+        return 2
+
+    servers = [SERVER_PATTERN.format(idx=i) for i in range(START_IDX, END_IDX + 1)]
+    auth = (username, password)
+
+    results: List[Result] = []
+    with requests.Session() as session:
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+            futures = [ex.submit(fetch_one, session, base_url, auth, run_ts_col) for base_url in servers]
+            for fut in as_completed(futures):
+                results.append(fut.result())
+
+    # Orden descendente por encolados
+    results.sort(key=lambda r: to_number(r.current), reverse=True)
+
+    # Mostrar por pantalla
+    print_table(results)
+
+    # Guardar CSV en la misma carpeta
+    csv_name = f"encolados_europa_{run_ts_file}.csv"
+    csv_path = os.path.join(script_dir(), csv_name)
+    save_csv(results, csv_path)
+    print(f"\nCSV guardado en: {csv_path}")
+
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
