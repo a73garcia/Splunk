@@ -19,19 +19,23 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 CREDENTIALS_FILE = "credentials.env"
 OUTPUT_FOLDER = "encolados"
 
-SERVER_PATTERN = "https://dh529-esa{idx}.c3s2.iphmx.com"
-
-START_IDX = 1
-END_IDX = 20
-
+DOMAIN_SUFFIX = ".c3s2.iphmx.com"
 TIMEOUT_SECONDS = 12
-MAX_WORKERS = 10
+MAX_WORKERS = 12
 RETRIES = 2
 
+# SSL (ESA suele usar self-signed)
 VERIFY_SSL = False
-
 if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Grupos: nombre_csv -> prefijo host -> rango idx
+GROUPS = [
+    {"cluster": "Europa",       "prefix": "dh529",  "start": 1, "end": 20},
+    {"cluster": "Aplicaciones", "prefix": "dh5505", "start": 1, "end": 20},
+    {"cluster": "América",      "prefix": "dh5504", "start": 1, "end": 20},
+    {"cluster": "Brasil",       "prefix": "dh6121", "start": 1, "end": 20},
+]
 
 
 @dataclass
@@ -45,261 +49,233 @@ class Result:
     error: Optional[str] = None
 
 
-def script_dir():
+def script_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
-def load_env_file(path: str):
+def load_env_file(path: str) -> Dict[str, str]:
+    data: Dict[str, str] = {}
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"No existe el archivo de credenciales: {path}")
 
-    data = {}
-
-    with open(path, "r") as f:
-
+    with open(path, "r", encoding="utf-8") as f:
         for line in f:
-
             line = line.strip()
-
-            if not line or line.startswith("#"):
+            if not line or line.startswith("#") or "=" not in line:
                 continue
-
-            if "=" not in line:
-                continue
-
             k, v = line.split("=", 1)
-
             data[k.strip()] = v.strip()
-
     return data
 
 
-def nodo_from_index(idx: int):
-
+def nodo_from_index(idx: int) -> str:
+    # ESA01..ESA09..ESA10..
     return f"ESA{idx:02d}"
 
 
-def get_cluster_from_url(url: str):
-
-    if "dh529" in url.lower():
-        return "Europa"
-
-    return "Otro"
+def build_base_url(prefix: str, idx: int) -> str:
+    # https://dh529-esa01.c3s2.iphmx.com
+    return f"https://{prefix}-esa{idx:02d}{DOMAIN_SUFFIX}"
 
 
-def parse_encolados(xml_text):
-
+def parse_encolados(xml_text: str) -> Tuple[str, int]:
+    """
+    En ESA: <gauge name="msgs_in_work_queue" current="17"/>
+    (current como atributo). Mantiene fallback por si aparece como nodo.
+    """
     root = ET.fromstring(xml_text)
 
     system_status = "No disponible"
-
     sys_node = root.find(".//system")
-
     if sys_node is not None:
         system_status = sys_node.attrib.get("status", system_status)
 
     for gauge in root.findall(".//gauge"):
-
         if gauge.attrib.get("name") == "msgs_in_work_queue":
-
             val = gauge.attrib.get("current")
 
             if val is None:
-
                 current_node = gauge.find("./current")
-
                 if current_node is not None and current_node.text:
                     val = current_node.text.strip()
 
-            if val is None or val.upper() == "N/A":
+            if val is None or val.strip().upper() == "N/A":
                 return system_status, 0
 
             try:
-                return system_status, int(float(val))
-            except:
+                return system_status, int(float(val.strip()))
+            except Exception:
                 return system_status, 0
 
     return system_status, 0
 
 
-def fetch_one(session, base_url, auth, idx, timestamp):
-
+def fetch_one(
+    session: requests.Session,
+    base_url: str,
+    auth: Tuple[str, str],
+    idx: int,
+    timestamp: str,
+    cluster: str
+) -> Result:
     nodo = nodo_from_index(idx)
-
-    cluster = get_cluster_from_url(base_url)
-
     url = f"{base_url}/xml/status"
+    headers = {"Accept": "application/xml"}
 
-    last_err = None
-
+    last_err: Optional[str] = None
     for _ in range(RETRIES + 1):
-
         try:
-
             r = session.get(
                 url,
-                headers={"Accept": "application/xml"},
+                headers=headers,
                 auth=auth,
                 timeout=TIMEOUT_SECONDS,
-                verify=VERIFY_SSL
+                verify=VERIFY_SSL,
             )
 
             if r.status_code != 200:
-
                 return Result(
-                    timestamp,
-                    nodo,
-                    cluster,
-                    "Error conexión",
-                    "msgs_in_work_queue",
-                    0,
-                    f"HTTP {r.status_code}"
+                    timestamp=timestamp,
+                    nodo=nodo,
+                    cluster=cluster,
+                    status="Error conexión",
+                    gauge_name="msgs_in_work_queue",
+                    encolados=0,
+                    error=f"HTTP {r.status_code}",
                 )
 
             status, encolados = parse_encolados(r.text)
-
             return Result(
-                timestamp,
-                nodo,
-                cluster,
-                status,
-                "msgs_in_work_queue",
-                encolados
+                timestamp=timestamp,
+                nodo=nodo,
+                cluster=cluster,
+                status=status,
+                gauge_name="msgs_in_work_queue",
+                encolados=encolados,
+                error=None,
             )
 
         except requests.exceptions.RequestException as e:
-
             last_err = str(e)
 
     return Result(
-        timestamp,
-        nodo,
-        cluster,
-        "Error conexión",
-        "msgs_in_work_queue",
-        0,
-        last_err
+        timestamp=timestamp,
+        nodo=nodo,
+        cluster=cluster,
+        status="Error conexión",
+        gauge_name="msgs_in_work_queue",
+        encolados=0,
+        error=last_err or "RequestException",
     )
 
 
-def print_table(results):
-
+def print_table(cluster: str, results: List[Result]) -> None:
     headers = ["Timestamp", "Nodo", "Cluster", "Status", "Gauge", "Encolados", "Error"]
-
-    rows = []
-
-    for r in results:
-
-        rows.append([
-            r.timestamp,
-            r.nodo,
-            r.cluster,
-            r.status,
-            r.gauge_name,
-            r.encolados,
-            r.error or ""
-        ])
+    rows = [
+        [r.timestamp, r.nodo, r.cluster, r.status, r.gauge_name, str(r.encolados), (r.error or "")]
+        for r in results
+    ]
 
     widths = [len(h) for h in headers]
-
     for row in rows:
-        for i, c in enumerate(row):
-            widths[i] = max(widths[i], len(str(c)))
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(str(cell)))
 
     def fmt(vals):
         return " | ".join(str(v).ljust(widths[i]) for i, v in enumerate(vals))
 
     sep = "-+-".join("-" * w for w in widths)
 
+    print(f"\n=== {cluster} ===")
     print(fmt(headers))
     print(sep)
+    for row in rows:
+        print(fmt(row))
 
-    for r in rows:
-        print(fmt(r))
 
-
-def save_csv(results, path):
-
+def save_csv(results: List[Result], path: str) -> None:
+    fieldnames = ["timestamp", "nodo", "cluster", "status", "gauge", "encolados", "error"]
     with open(path, "w", newline="", encoding="utf-8") as f:
-
-        writer = csv.writer(f)
-
-        writer.writerow([
-            "timestamp",
-            "nodo",
-            "cluster",
-            "status",
-            "gauge",
-            "encolados",
-            "error"
-        ])
-
+        w = csv.DictWriter(f, fieldnames=fieldnames)
+        w.writeheader()
         for r in results:
+            w.writerow({
+                "timestamp": r.timestamp,
+                "nodo": r.nodo,
+                "cluster": r.cluster,
+                "status": r.status,
+                "gauge": r.gauge_name,
+                "encolados": r.encolados,
+                "error": r.error or "",
+            })
 
-            writer.writerow([
-                r.timestamp,
-                r.nodo,
-                r.cluster,
-                r.status,
-                r.gauge_name,
-                r.encolados,
-                r.error or ""
-            ])
+
+def safe_filename(name: str) -> str:
+    # quita acentos/raros mínimo para windows: reemplazamos espacios y caracteres conflictivos
+    return (
+        name.replace(" ", "_")
+            .replace("/", "_")
+            .replace("\\", "_")
+            .replace(":", "_")
+            .replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
+            .replace("Á", "A").replace("É", "E").replace("Í", "I").replace("Ó", "O").replace("Ú", "U")
+    )
 
 
-def main():
-
+def main() -> int:
     now = datetime.now()
-
-    ts_column = now.strftime("%Y-%m-%d %H:%M:%S")
-
+    ts_col = now.strftime("%Y-%m-%d %H:%M:%S")
     ts_file = now.strftime("%Y%m%d_%H%M%S")
 
     base_path = script_dir()
 
     # Crear carpeta encolados si no existe
-    output_path = os.path.join(base_path, OUTPUT_FOLDER)
-    os.makedirs(output_path, exist_ok=True)
+    out_dir = os.path.join(base_path, OUTPUT_FOLDER)
+    os.makedirs(out_dir, exist_ok=True)
 
+    # Credenciales
     creds = load_env_file(os.path.join(base_path, CREDENTIALS_FILE))
+    username = creds.get("GLOBAL_USERNAME")
+    password = creds.get("GLOBAL_PASSWORD")
+    if not username or not password:
+        print("Faltan GLOBAL_USERNAME y/o GLOBAL_PASSWORD en credentials.env")
+        return 2
 
-    username = creds["GLOBAL_USERNAME"]
-    password = creds["GLOBAL_PASSWORD"]
-
-    servers = []
-
-    for i in range(START_IDX, END_IDX + 1):
-
-        servers.append((i, SERVER_PATTERN.format(idx=i)))
-
-    results = []
+    auth = (username, password)
 
     with requests.Session() as session:
+        # Procesar cada cluster y guardar CSV independiente
+        for g in GROUPS:
+            cluster = g["cluster"]  # Europa (E mayúscula), Aplicaciones, América, Brasil
+            prefix = g["prefix"]
+            start = int(g["start"])
+            end = int(g["end"])
 
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+            targets = [(i, build_base_url(prefix, i)) for i in range(start, end + 1)]
 
-            futures = []
+            results: List[Result] = []
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+                futures = [
+                    ex.submit(fetch_one, session, base_url, auth, idx, ts_col, cluster)
+                    for idx, base_url in targets
+                ]
+                for fut in as_completed(futures):
+                    results.append(fut.result())
 
-            for idx, url in servers:
+            # Orden por encolados desc
+            results.sort(key=lambda r: r.encolados, reverse=True)
 
-                futures.append(
-                    ex.submit(fetch_one, session, url, (username, password), idx, ts_column)
-                )
+            # Print tabla por cluster
+            print_table(cluster, results)
 
-            for f in as_completed(futures):
+            # CSV por cluster
+            csv_name = f"encolados_{safe_filename(cluster)}_{ts_file}.csv"
+            csv_path = os.path.join(out_dir, csv_name)
+            save_csv(results, csv_path)
+            print(f"\nCSV guardado ({cluster}) en: {csv_path}")
 
-                results.append(f.result())
-
-    results.sort(key=lambda r: r.encolados, reverse=True)
-
-    print_table(results)
-
-    csv_name = f"encolados_europa_{ts_file}.csv"
-
-    csv_path = os.path.join(output_path, csv_name)
-
-    save_csv(results, csv_path)
-
-    print("\nCSV guardado en:", csv_path)
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
