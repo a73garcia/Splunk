@@ -2,8 +2,9 @@
 # -*- coding: utf-8 -*-
 
 import os
-import csv
 import re
+import time
+import threading
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Tuple
 from datetime import datetime
@@ -14,17 +15,18 @@ import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
-# -------------------------
+# =========================
 # Config
-# -------------------------
+# =========================
 CREDENTIALS_FILE = "credentials.env"
-OUTPUT_FOLDER = "encolados"
 
 TIMEOUT_SECONDS = 12
 MAX_WORKERS = 12
 RETRIES = 2
 
-# Umbrales para coloreo/alerta (según ENCOLADOS)
+REFRESH_SECONDS = 60
+
+# Umbrales (por ENCOLADOS ACTUAL)
 WARNING_THRESHOLD = 50
 CRITICAL_THRESHOLD = 100
 
@@ -33,7 +35,7 @@ VERIFY_SSL = False
 if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Colores consola (ANSI)
+# ANSI colors
 RED = "\033[91m"
 YELLOW = "\033[93m"
 RESET = "\033[0m"
@@ -47,9 +49,9 @@ GROUPS = [
 ]
 
 
-# -------------------------
-# Data model
-# -------------------------
+# =========================
+# Model
+# =========================
 @dataclass
 class Result:
     timestamp: str
@@ -58,7 +60,6 @@ class Result:
     status: str
 
     encolados: int
-
     ram: int
     cpu: int
     conn_in: int
@@ -68,9 +69,9 @@ class Result:
     error: Optional[str] = None
 
 
-# -------------------------
+# =========================
 # Helpers
-# -------------------------
+# =========================
 def script_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
@@ -79,7 +80,6 @@ def load_env_file(path: str) -> Dict[str, str]:
     data: Dict[str, str] = {}
     if not os.path.exists(path):
         raise FileNotFoundError(f"No existe el archivo de credenciales: {path}")
-
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -91,49 +91,15 @@ def load_env_file(path: str) -> Dict[str, str]:
 
 
 def nodo_from_index(idx: int) -> str:
-    # Solo para mostrar: ESA01..ESA20 (con 0 delante)
     return f"ESA{idx:02d}"
 
 
-def safe_filename(name: str) -> str:
-    return (
-        name.replace(" ", "_")
-        .replace("/", "_")
-        .replace("\\", "_")
-        .replace(":", "_")
-        .replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
-        .replace("Á", "A").replace("É", "E").replace("Í", "I").replace("Ó", "O").replace("Ú", "U")
-    )
-
-
-def monthly_csv_path(out_dir: str, cluster: str, now: datetime) -> str:
-    month = now.strftime("%Y-%m")
-    return os.path.join(out_dir, f"encolados_{safe_filename(cluster)}_{month}.csv")
-
-
-def colorize(text: str, encolados: int, has_error: bool = False) -> str:
-    if has_error:
-        return text
-    if encolados >= CRITICAL_THRESHOLD:
-        return f"{RED}{text}{RESET}"
-    if encolados >= WARNING_THRESHOLD:
-        return f"{YELLOW}{text}{RESET}"
-    return text
-
-
 def to_int(val: Optional[str]) -> int:
-    """
-    Convierte a int valores típicos:
-      "23" -> 23
-      "309G" -> 309
-      "N/A" o None -> 0
-    """
     if val is None:
         return 0
     s = str(val).strip()
     if not s or s.upper() == "N/A":
         return 0
-    # extrae primer número (entero o decimal)
     m = re.search(r"(\d+(\.\d+)?)", s)
     if not m:
         return 0
@@ -143,22 +109,32 @@ def to_int(val: Optional[str]) -> int:
         return 0
 
 
-# -------------------------
-# XML parsing
-# -------------------------
-def parse_metrics(xml_text: str) -> Tuple[str, Dict[str, int]]:
-    """
-    Extrae status del sistema y gauges:
-      - msgs_in_work_queue
-      - ram_utilization
-      - cpu_utilization
-      - conn_in
-      - conn_out
-      - active_recips
+def trend_symbol(prev: int, cur: int) -> str:
+    if cur > prev:
+        return "+"
+    if cur < prev:
+        return "-"
+    return "="
 
-    En ESA vienen como:
-      <gauge name="xxx" current="123"/>
-    """
+
+def colorize(text: str, encolados_actual: int, has_error: bool = False) -> str:
+    if has_error:
+        return text
+    if encolados_actual >= CRITICAL_THRESHOLD:
+        return f"{RED}{text}{RESET}"
+    if encolados_actual >= WARNING_THRESHOLD:
+        return f"{YELLOW}{text}{RESET}"
+    return text
+
+
+def clear_screen() -> None:
+    print("\033[2J\033[H", end="")
+
+
+# =========================
+# XML parsing
+# =========================
+def parse_metrics(xml_text: str) -> Tuple[str, Dict[str, int]]:
     root = ET.fromstring(xml_text)
 
     system_status = "No disponible"
@@ -179,7 +155,6 @@ def parse_metrics(xml_text: str) -> Tuple[str, Dict[str, int]]:
         name = gauge.attrib.get("name")
         if name in wanted:
             val = gauge.attrib.get("current")
-            # fallback por si viniera como nodo <current>
             if val is None:
                 cur = gauge.find("./current")
                 if cur is not None and cur.text:
@@ -189,9 +164,9 @@ def parse_metrics(xml_text: str) -> Tuple[str, Dict[str, int]]:
     return system_status, wanted
 
 
-# -------------------------
+# =========================
 # Network
-# -------------------------
+# =========================
 def fetch_one(
     session: requests.Session,
     url: str,
@@ -215,15 +190,7 @@ def fetch_one(
             )
 
             if r.status_code != 200:
-                return Result(
-                    timestamp=timestamp,
-                    nodo=node,
-                    cluster=cluster,
-                    status="Error conexión",
-                    encolados=0,
-                    ram=0, cpu=0, conn_in=0, conn_out=0, active_recips=0,
-                    error=f"HTTP {r.status_code}",
-                )
+                return Result(timestamp, node, cluster, "Error conexión", 0, 0, 0, 0, 0, 0, f"HTTP {r.status_code}")
 
             status, m = parse_metrics(r.text)
             return Result(
@@ -243,97 +210,63 @@ def fetch_one(
         except requests.exceptions.RequestException as e:
             last_err = str(e)
 
-    return Result(
-        timestamp=timestamp,
-        nodo=node,
-        cluster=cluster,
-        status="Error conexión",
-        encolados=0,
-        ram=0, cpu=0, conn_in=0, conn_out=0, active_recips=0,
-        error=last_err or "RequestException",
-    )
+    return Result(timestamp, node, cluster, "Error conexión", 0, 0, 0, 0, 0, 0, last_err or "RequestException")
 
 
-# -------------------------
-# Output: CSV (append mensual)
-# -------------------------
-def append_csv(results: List[Result], path: str) -> None:
-    fieldnames = [
-        "timestamp", "nodo", "cluster", "status",
-        "encolados", "ram", "cpu", "conn_in", "conn_out", "active_recips",
-        "error"
-    ]
-    file_exists = os.path.exists(path)
-
-    with open(path, "a", newline="", encoding="utf-8") as f:
-        w = csv.DictWriter(f, fieldnames=fieldnames)
-        if not file_exists:
-            w.writeheader()
-
-        for r in results:
-            w.writerow({
-                "timestamp": r.timestamp,
-                "nodo": r.nodo,
-                "cluster": r.cluster,
-                "status": r.status,
-                "encolados": r.encolados,
-                "ram": r.ram,
-                "cpu": r.cpu,
-                "conn_in": r.conn_in,
-                "conn_out": r.conn_out,
-                "active_recips": r.active_recips,
-                "error": r.error or "",
-            })
-
-
-def print_cluster_alerts(cluster: str, results: List[Result]) -> None:
-    critical = [r for r in results if (not r.error and r.encolados >= CRITICAL_THRESHOLD)]
-    warning = [r for r in results if (not r.error and WARNING_THRESHOLD <= r.encolados < CRITICAL_THRESHOLD)]
-
-    if not critical and not warning:
-        return
-
-    print(f"\nALERTAS ({cluster})")
-    for r in sorted(critical, key=lambda x: x.encolados, reverse=True):
-        print(f"{RED}CRITICAL{RESET} - {r.nodo} {cluster} -> encolados={r.encolados} ({r.timestamp})")
-    for r in sorted(warning, key=lambda x: x.encolados, reverse=True):
-        print(f"{YELLOW}WARNING{RESET}  - {r.nodo} {cluster} -> encolados={r.encolados} ({r.timestamp})")
-
-
-# -------------------------
-# TABLAS POR CLUSTER (misma tabla, pero ampliada con métricas)
-# -------------------------
-def print_table(cluster: str, results: List[Result]) -> None:
-    """
-    Tabla detallada del cluster. Se colorea la fila completa según ENCOLADOS.
-    """
+# =========================
+# UI: Table
+# =========================
+def print_table(cluster: str, results: List[Result], prev_enc: Dict[str, int]) -> None:
     results_sorted = sorted(results, key=lambda r: r.encolados, reverse=True)
 
     headers = [
-        "Timestamp", "Nodo", "Cluster", "Status",
-        "Encolados", "RAM", "CPU", "Conn_in", "Conn_out", "Active_recips",
+        "Timestamp", "Nodo", "Status",
+        "Encolados_Ant", "Encolados_Act", "Var",
+        "RAM", "CPU", "Conn_in", "Conn_out", "Active_recips",
         "Error"
     ]
 
-    rows = [
-        [
+    # Pre-calcular filas y totales
+    rows = []
+    total_prev = 0
+    total_cur = 0
+
+    for r in results_sorted:
+        prev = prev_enc.get(r.nodo, r.encolados)  # primera iteración: prev=cur
+        cur = r.encolados
+        sym = trend_symbol(prev, cur)
+
+        total_prev += prev
+        total_cur += cur
+
+        rows.append([
             r.timestamp,
             r.nodo,
-            r.cluster,
             r.status,
-            str(r.encolados),
+            str(prev),
+            str(cur),
+            sym,
             str(r.ram),
             str(r.cpu),
             str(r.conn_in),
             str(r.conn_out),
             str(r.active_recips),
             (r.error or "")
-        ]
-        for r in results_sorted
+        ])
+
+    # Fila TOTAL (la “fila” que indica tendencia global del cluster)
+    total_sym = trend_symbol(total_prev, total_cur)
+    total_row = [
+        "", "TOTAL", "",
+        str(total_prev),
+        str(total_cur),
+        total_sym,
+        "", "", "", "", "", ""
     ]
 
+    # Calcular anchos
     widths = [len(h) for h in headers]
-    for row in rows:
+    for row in rows + [total_row]:
         for i, cell in enumerate(row):
             widths[i] = max(widths[i], len(str(cell)))
 
@@ -342,115 +275,123 @@ def print_table(cluster: str, results: List[Result]) -> None:
 
     sep = "-+-".join("-" * w for w in widths)
 
-    print(f"\n=== {cluster} ===")
+    print(f"=== {cluster} | refresco cada {REFRESH_SECONDS}s | Pulsa ESC para salir ===\n")
     print(fmt(headers))
     print(sep)
 
-    for r in results_sorted:
-        line = fmt([
-            r.timestamp, r.nodo, r.cluster, r.status,
-            str(r.encolados), str(r.ram), str(r.cpu), str(r.conn_in), str(r.conn_out), str(r.active_recips),
-            (r.error or "")
-        ])
+    for r, row in zip(results_sorted, rows):
+        line = fmt(row)
         print(colorize(line, r.encolados, has_error=bool(r.error)))
 
-
-# -------------------------
-# RESUMEN CLUSTERS (solo basado en ENCOLADOS)
-# - sin Rank
-# - Top3 en 3 filas
-# - separador por cluster
-# - colores según ENCOLADOS
-# -------------------------
-def print_summary(all_results: Dict[str, List[Result]]) -> None:
-    print("\n============== RESUMEN CLUSTERS ==============")
-
-    headers = ["Cluster", "Total Encolados", "Nodo", "Encolados", "Errores"]
-
-    rows_with_separators: List[Tuple[str, Optional[List[str]]]] = []
-
-    for cluster, results in all_results.items():
-        total = sum(r.encolados for r in results)
-        errors = sum(1 for r in results if r.error)
-        sorted_nodes = sorted(results, key=lambda r: r.encolados, reverse=True)
-
-        for pos in range(3):
-            if pos < len(sorted_nodes):
-                r = sorted_nodes[pos]
-                row = [
-                    cluster if pos == 0 else "",
-                    str(total) if pos == 0 else "",
-                    r.nodo,
-                    str(r.encolados),
-                    str(errors) if pos == 0 else ""
-                ]
-            else:
-                row = [
-                    cluster if pos == 0 else "",
-                    str(total) if pos == 0 else "",
-                    "-",
-                    "0",
-                    str(errors) if pos == 0 else ""
-                ]
-            rows_with_separators.append(("ROW", row))
-
-        rows_with_separators.append(("SEP", None))
-
-    rows_only = [row for kind, row in rows_with_separators if kind == "ROW" and row is not None]
-
-    widths = [len(h) for h in headers]
-    for row in rows_only:
-        for i, cell in enumerate(row):
-            widths[i] = max(widths[i], len(cell))
-
-    def fmt(vals: List[str]) -> str:
-        return " | ".join(vals[i].ljust(widths[i]) for i in range(len(vals)))
-
-    sep_line = "-+-".join("-" * w for w in widths)
-    cluster_sep_line = "=" * len(sep_line)
-
-    print(fmt(headers))
-    print(sep_line)
-
-    for kind, row in rows_with_separators:
-        if kind == "SEP":
-            print(cluster_sep_line)
-            continue
-
-        assert row is not None
-        encolados_val = to_int(row[3])
-        line = fmt(row)
-        print(colorize(line, encolados_val, has_error=False))
+    # Separador y TOTAL (coloreado por total actual, siguiendo la misma lógica)
+    print(sep)
+    print(colorize(fmt(total_row), total_cur, has_error=False))
 
 
-# -------------------------
-# Main
-# -------------------------
-def main() -> int:
-    now = datetime.now()
-    ts_col = now.strftime("%Y-%m-%d %H:%M:%S")
+def print_alerts(cluster: str, results: List[Result]) -> None:
+    critical = [r for r in results if (not r.error and r.encolados >= CRITICAL_THRESHOLD)]
+    warning = [r for r in results if (not r.error and WARNING_THRESHOLD <= r.encolados < CRITICAL_THRESHOLD)]
 
-    base = script_dir()
-    out_dir = os.path.join(base, OUTPUT_FOLDER)
-    os.makedirs(out_dir, exist_ok=True)
+    if not critical and not warning:
+        return
 
-    creds = load_env_file(os.path.join(base, CREDENTIALS_FILE))
-    username = creds.get("GLOBAL_USERNAME")
-    password = creds.get("GLOBAL_PASSWORD")
-    if not username or not password:
-        print("Faltan GLOBAL_USERNAME y/o GLOBAL_PASSWORD en credentials.env")
-        return 2
+    print("\nALERTAS")
+    for r in sorted(critical, key=lambda x: x.encolados, reverse=True):
+        print(f"{RED}CRITICAL{RESET} - {r.nodo} {cluster} -> encolados={r.encolados}")
+    for r in sorted(warning, key=lambda x: x.encolados, reverse=True):
+        print(f"{YELLOW}WARNING{RESET}  - {r.nodo} {cluster} -> encolados={r.encolados}")
 
-    auth = (username, password)
 
-    all_results: Dict[str, List[Result]] = {}
+# =========================
+# ESC listener (cross-platform)
+# =========================
+def start_esc_listener(stop_event: threading.Event) -> None:
+    """
+    Escucha ESC en background y activa stop_event.
+    """
+    try:
+        import msvcrt  # type: ignore
+
+        def _win_loop():
+            while not stop_event.is_set():
+                if msvcrt.kbhit():
+                    ch = msvcrt.getch()
+                    if ch == b"\x1b":  # ESC
+                        stop_event.set()
+                        return
+                time.sleep(0.05)
+
+        threading.Thread(target=_win_loop, daemon=True).start()
+        return
+
+    except Exception:
+        pass
+
+    # POSIX
+    import sys
+    import select
+    import termios
+    import tty
+
+    def _posix_loop():
+        fd = sys.stdin.fileno()
+        old = termios.tcgetattr(fd)
+        try:
+            tty.setcbreak(fd)
+            while not stop_event.is_set():
+                r, _, _ = select.select([sys.stdin], [], [], 0.1)
+                if r:
+                    ch = sys.stdin.read(1)
+                    if ch == "\x1b":
+                        stop_event.set()
+                        return
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+    threading.Thread(target=_posix_loop, daemon=True).start()
+
+
+# =========================
+# App
+# =========================
+def choose_cluster() -> Dict:
+    names = [g["cluster"] for g in GROUPS]
+
+    print("Clusters disponibles:")
+    for i, n in enumerate(names, 1):
+        print(f"  {i}) {n}")
+
+    while True:
+        choice = input("\nElige cluster (nombre o número): ").strip()
+
+        if choice.isdigit():
+            idx = int(choice)
+            if 1 <= idx <= len(GROUPS):
+                return GROUPS[idx - 1]
+
+        for g in GROUPS:
+            if g["cluster"].lower() == choice.lower():
+                return g
+
+        print("Opción no válida. Prueba de nuevo.")
+
+
+def run_loop_for_cluster(group: Dict, auth: Tuple[str, str]) -> None:
+    cluster = group["cluster"]
+    pattern = group["pattern"]
+    start = int(group["start"])
+    end = int(group["end"])
+
+    stop_event = threading.Event()
+    start_esc_listener(stop_event)
+
+    # Memoria de encolados previos por nodo
+    prev_encolados: Dict[str, int] = {}
 
     with requests.Session() as session:
-        for g in GROUPS:
-            cluster = g["cluster"]
-            pattern = g["pattern"]
-            start = int(g["start"])
-            end = int(g["end"])
+        while not stop_event.is_set():
+            now = datetime.now()
+            ts_col = now.strftime("%Y-%m-%d %H:%M:%S")
 
             targets = [(i, pattern.format(idx=i)) for i in range(start, end + 1)]
 
@@ -463,20 +404,37 @@ def main() -> int:
                 for fut in as_completed(futures):
                     results.append(fut.result())
 
-            all_results[cluster] = results
+            # UI
+            clear_screen()
+            print_table(cluster, results, prev_encolados)
+            print_alerts(cluster, results)
+            print("\n(Refrescando... pulsa ESC para salir)")
 
-            # Tablas detalladas por cluster (ahora con RAM/CPU/CONN/ACTIVE)
-            print_table(cluster, results)
-            print_cluster_alerts(cluster, results)
+            # Actualizar prev para el siguiente ciclo
+            prev_encolados = {r.nodo: r.encolados for r in results}
 
-            # CSV mensual por cluster (append)
-            csv_path = monthly_csv_path(out_dir, cluster, now)
-            append_csv(results, csv_path)
-            print(f"\n[{cluster}] Filas añadidas: {len(results)} | CSV mensual: {csv_path}")
+            # Sleep en trozos para reaccionar rápido al ESC
+            for _ in range(REFRESH_SECONDS * 10):
+                if stop_event.is_set():
+                    break
+                time.sleep(0.1)
 
-    # Resumen final (Top3 por cluster)
-    print_summary(all_results)
+    clear_screen()
+    print(f"Salida solicitada. Monitor detenido para cluster: {cluster}")
 
+
+def main() -> int:
+    base = script_dir()
+    creds = load_env_file(os.path.join(base, CREDENTIALS_FILE))
+
+    username = creds.get("GLOBAL_USERNAME")
+    password = creds.get("GLOBAL_PASSWORD")
+    if not username or not password:
+        print("Faltan GLOBAL_USERNAME y/o GLOBAL_PASSWORD en credentials.env")
+        return 2
+
+    group = choose_cluster()
+    run_loop_for_cluster(group, (username, password))
     return 0
 
 
