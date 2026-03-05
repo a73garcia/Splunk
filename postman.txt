@@ -1,6 +1,27 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+Monitor Cisco ESA (/xml/status) - Encolados por cluster
+
+✅ Lee credenciales desde credentials.env (misma carpeta)
+✅ Consulta en paralelo un rango de nodos por cluster
+✅ Soporta certificados self-signed (verify=False) y silencia warnings
+✅ Extrae:
+   - status/system/@status
+   - gauge name="msgs_in_work_queue" (valor viene como atributo current="17")
+✅ Resultados:
+   - Nodo mostrado: ESA01..ESA20 (con 0 delante solo en resultados)
+   - Cluster: Europa, Aplicaciones, América, Brasil
+✅ Encolados: N/A o ausente => 0
+✅ Consola:
+   - Tabla completa por cluster (ordenada por encolados desc)
+   - Tabla resumen final por cluster (total, top, errores)
+✅ Persistencia:
+   - Carpeta encolados/
+   - 1 CSV por cluster y por mes (append): encolados_<Cluster>_YYYY-MM.csv
+"""
+
 import os
 import csv
 from dataclasses import dataclass
@@ -11,8 +32,6 @@ import requests
 import urllib3
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
-
-import matplotlib.pyplot as plt
 
 
 # -------------------------
@@ -31,6 +50,8 @@ if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Un CSV mensual por cluster (append)
+# idx en URL SIN 0 delante: ...esa1..., ...esa2...
+# Nodo mostrado CON 0 delante: ESA01, ESA02...
 GROUPS = [
     {
         "cluster": "Europa",
@@ -59,6 +80,9 @@ GROUPS = [
 ]
 
 
+# -------------------------
+# Data model
+# -------------------------
 @dataclass
 class Result:
     timestamp: str
@@ -70,6 +94,9 @@ class Result:
     error: Optional[str] = None
 
 
+# -------------------------
+# Helpers
+# -------------------------
 def script_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
@@ -90,14 +117,41 @@ def load_env_file(path: str) -> Dict[str, str]:
 
 
 def nodo_from_index(idx: int) -> str:
-    # Solo para mostrar: ESA01..ESA09..ESA10..
     return f"ESA{idx:02d}"
 
 
+def safe_filename(name: str) -> str:
+    return (
+        name.replace(" ", "_")
+        .replace("/", "_")
+        .replace("\\", "_")
+        .replace(":", "_")
+        .replace("á", "a")
+        .replace("é", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ú", "u")
+        .replace("Á", "A")
+        .replace("É", "E")
+        .replace("Í", "I")
+        .replace("Ó", "O")
+        .replace("Ú", "U")
+    )
+
+
+def monthly_csv_path(out_dir: str, cluster: str, now: datetime) -> str:
+    month = now.strftime("%Y-%m")
+    return os.path.join(out_dir, f"encolados_{safe_filename(cluster)}_{month}.csv")
+
+
+# -------------------------
+# XML parsing
+# -------------------------
 def parse_encolados(xml_text: str) -> Tuple[str, int]:
     """
-    En ESA: <gauge name="msgs_in_work_queue" current="17"/>
-    (current como atributo). Si falta o es N/A -> 0
+    ESA típico:
+      <gauge name="msgs_in_work_queue" current="17"/>
+    Si falta o es N/A => 0
     """
     root = ET.fromstring(xml_text)
 
@@ -110,7 +164,7 @@ def parse_encolados(xml_text: str) -> Tuple[str, int]:
         if gauge.attrib.get("name") == "msgs_in_work_queue":
             val = gauge.attrib.get("current")
 
-            # fallback por si viniera como nodo <current>
+            # Fallback por si viniera como nodo <current>17</current>
             if val is None:
                 current_node = gauge.find("./current")
                 if current_node is not None and current_node.text:
@@ -127,6 +181,9 @@ def parse_encolados(xml_text: str) -> Tuple[str, int]:
     return system_status, 0
 
 
+# -------------------------
+# Network
+# -------------------------
 def fetch_one(
     session: requests.Session,
     url: str,
@@ -185,30 +242,9 @@ def fetch_one(
     )
 
 
-def safe_filename(name: str) -> str:
-    return (
-        name.replace(" ", "_")
-        .replace("/", "_")
-        .replace("\\", "_")
-        .replace(":", "_")
-        .replace("á", "a")
-        .replace("é", "e")
-        .replace("í", "i")
-        .replace("ó", "o")
-        .replace("ú", "u")
-        .replace("Á", "A")
-        .replace("É", "E")
-        .replace("Í", "I")
-        .replace("Ó", "O")
-        .replace("Ú", "U")
-    )
-
-
-def monthly_csv_path(out_dir: str, cluster: str, now: datetime) -> str:
-    month = now.strftime("%Y-%m")  # 2026-03
-    return os.path.join(out_dir, f"encolados_{safe_filename(cluster)}_{month}.csv")
-
-
+# -------------------------
+# Output: CSV (append mensual)
+# -------------------------
 def append_csv(results: List[Result], path: str) -> None:
     fieldnames = ["timestamp", "nodo", "cluster", "status", "gauge", "encolados", "error"]
     file_exists = os.path.exists(path)
@@ -232,27 +268,70 @@ def append_csv(results: List[Result], path: str) -> None:
             )
 
 
-def plot_cluster(cluster: str, timestamp: str, results: List[Result]) -> None:
-    """
-    Muestra una gráfica por cluster (encolados por nodo).
-    Nota: si ejecutas esto en una tarea programada/servicio sin UI, puede no mostrar.
-    """
-    # Ordenado desc para lectura rápida
+# -------------------------
+# Output: Console tables
+# -------------------------
+def print_table(cluster: str, results: List[Result]) -> None:
     results_sorted = sorted(results, key=lambda r: r.encolados, reverse=True)
 
-    labels = [r.nodo for r in results_sorted]
-    values = [r.encolados for r in results_sorted]
+    headers = ["Timestamp", "Nodo", "Cluster", "Status", "Gauge", "Encolados", "Error"]
+    rows = [
+        [r.timestamp, r.nodo, r.cluster, r.status, r.gauge, str(r.encolados), (r.error or "")]
+        for r in results_sorted
+    ]
 
-    plt.figure()
-    plt.bar(labels, values)
-    plt.title(f"Encolados - {cluster} ({timestamp})")
-    plt.xlabel("Nodo")
-    plt.ylabel("msgs_in_work_queue")
-    plt.xticks(rotation=70)
-    plt.tight_layout()
-    plt.show()
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(str(cell)))
+
+    def fmt(vals):
+        return " | ".join(str(v).ljust(widths[i]) for i, v in enumerate(vals))
+
+    sep = "-+-".join("-" * w for w in widths)
+
+    print(f"\n=== {cluster} ===")
+    print(fmt(headers))
+    print(sep)
+    for row in rows:
+        print(fmt(row))
 
 
+def print_summary(all_results: Dict[str, List[Result]]) -> None:
+    print("\n============== RESUMEN CLUSTERS ==============")
+
+    headers = ["Cluster", "Total Encolados", "Nodo Máximo", "Top 3 Nodos", "Errores"]
+
+    rows: List[List[str]] = []
+    for cluster, results in all_results.items():
+        total = sum(r.encolados for r in results)
+        sorted_nodes = sorted(results, key=lambda r: r.encolados, reverse=True)
+
+        max_node = sorted_nodes[0].nodo if sorted_nodes else "-"
+        top3 = ", ".join([f"{r.nodo}:{r.encolados}" for r in sorted_nodes[:3]]) if sorted_nodes else "-"
+        errors = sum(1 for r in results if r.error)
+
+        rows.append([cluster, str(total), max_node, top3, str(errors)])
+
+    widths = [len(h) for h in headers]
+    for row in rows:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(cell))
+
+    def fmt(vals):
+        return " | ".join(vals[i].ljust(widths[i]) for i in range(len(vals)))
+
+    sep = "-+-".join("-" * w for w in widths)
+
+    print(fmt(headers))
+    print(sep)
+    for row in rows:
+        print(fmt(row))
+
+
+# -------------------------
+# Main
+# -------------------------
 def main() -> int:
     now = datetime.now()
     ts_col = now.strftime("%Y-%m-%d %H:%M:%S")
@@ -269,6 +348,8 @@ def main() -> int:
         return 2
 
     auth = (username, password)
+
+    all_results: Dict[str, List[Result]] = {}
 
     with requests.Session() as session:
         for g in GROUPS:
@@ -288,14 +369,18 @@ def main() -> int:
                 for fut in as_completed(futures):
                     results.append(fut.result())
 
-            # Guardado mensual por cluster (append)
+            all_results[cluster] = results
+
+            # Tabla completa por cluster
+            print_table(cluster, results)
+
+            # Append a CSV mensual del cluster
             csv_path = monthly_csv_path(out_dir, cluster, now)
             append_csv(results, csv_path)
+            print(f"\n[{cluster}] Filas añadidas: {len(results)} | CSV mensual: {csv_path}")
 
-            # Gráfica en pantalla
-            plot_cluster(cluster, ts_col, results)
-
-            print(f"[{cluster}] Filas añadidas: {len(results)} | CSV: {csv_path}")
+    # Resumen final
+    print_summary(all_results)
 
     return 0
 
