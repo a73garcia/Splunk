@@ -1,30 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-"""
-Monitor Cisco ESA (/xml/status) - Encolados por cluster
-
-✅ Lee credenciales desde credentials.env (misma carpeta)
-✅ Consulta en paralelo un rango de nodos por cluster
-✅ Soporta certificados self-signed (verify=False) y silencia warnings
-✅ Extrae:
-   - status/system/@status
-   - gauge name="msgs_in_work_queue" (valor viene como atributo current="17")
-✅ Resultados:
-   - Nodo mostrado: ESA01..ESA20 (con 0 delante solo en resultados)
-   - Cluster: Europa, Aplicaciones, América, Brasil
-✅ Encolados: N/A o ausente => 0
-✅ Consola:
-   - Tabla completa por cluster (ordenada por encolados desc) con colores:
-        - >=100 rojo
-        - 50-99 amarillo
-   - ALERTAS en texto (WARNING/CRITICAL)
-   - Resumen final por cluster con TOP 3 en filas (Top1/Top2/Top3) y colores
-✅ Persistencia:
-   - Carpeta encolados/
-   - 1 CSV por cluster y por mes (append): encolados_<Cluster>_YYYY-MM.csv
-"""
-
 import os
 import csv
 from dataclasses import dataclass
@@ -47,23 +23,18 @@ TIMEOUT_SECONDS = 12
 MAX_WORKERS = 12
 RETRIES = 2
 
-# Umbrales para coloreo/alerta
 WARNING_THRESHOLD = 50
 CRITICAL_THRESHOLD = 100
 
-# SSL (ESA suele usar self-signed)
 VERIFY_SSL = False
 if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Colores consola (ANSI)
+# ANSI colors
 RED = "\033[91m"
 YELLOW = "\033[93m"
 RESET = "\033[0m"
 
-# Un CSV mensual por cluster (append)
-# idx en URL SIN 0 delante: ...esa1..., ...esa2...
-# Nodo mostrado CON 0 delante: ESA01, ESA02...
 GROUPS = [
     {"cluster": "Europa",       "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
     {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
@@ -72,9 +43,6 @@ GROUPS = [
 ]
 
 
-# -------------------------
-# Data model
-# -------------------------
 @dataclass
 class Result:
     timestamp: str
@@ -86,9 +54,6 @@ class Result:
     error: Optional[str] = None
 
 
-# -------------------------
-# Helpers
-# -------------------------
 def script_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
@@ -129,9 +94,6 @@ def monthly_csv_path(out_dir: str, cluster: str, now: datetime) -> str:
 
 
 def colorize(text: str, value: int, has_error: bool = False) -> str:
-    """
-    Colorea una línea/celda según valor (si no hay error).
-    """
     if has_error:
         return text
     if value >= CRITICAL_THRESHOLD:
@@ -141,15 +103,7 @@ def colorize(text: str, value: int, has_error: bool = False) -> str:
     return text
 
 
-# -------------------------
-# XML parsing
-# -------------------------
 def parse_encolados(xml_text: str) -> Tuple[str, int]:
-    """
-    ESA típico:
-      <gauge name="msgs_in_work_queue" current="17"/>
-    Si falta o es N/A => 0
-    """
     root = ET.fromstring(xml_text)
 
     system_status = "No disponible"
@@ -161,7 +115,6 @@ def parse_encolados(xml_text: str) -> Tuple[str, int]:
         if gauge.attrib.get("name") == "msgs_in_work_queue":
             val = gauge.attrib.get("current")
 
-            # Fallback por si viniera como nodo <current>17</current>
             if val is None:
                 current_node = gauge.find("./current")
                 if current_node is not None and current_node.text:
@@ -178,9 +131,6 @@ def parse_encolados(xml_text: str) -> Tuple[str, int]:
     return system_status, 0
 
 
-# -------------------------
-# Network
-# -------------------------
 def fetch_one(
     session: requests.Session,
     url: str,
@@ -215,9 +165,6 @@ def fetch_one(
     return Result(timestamp, node, cluster, "Error conexión", "msgs_in_work_queue", 0, last_err or "RequestException")
 
 
-# -------------------------
-# Output: CSV (append mensual)
-# -------------------------
 def append_csv(results: List[Result], path: str) -> None:
     fieldnames = ["timestamp", "nodo", "cluster", "status", "gauge", "encolados", "error"]
     file_exists = os.path.exists(path)
@@ -239,15 +186,7 @@ def append_csv(results: List[Result], path: str) -> None:
             })
 
 
-# -------------------------
-# Output: Console tables + Alerts
-# -------------------------
 def print_cluster_alerts(cluster: str, results: List[Result]) -> None:
-    """
-    Muestra alertas por consola según umbrales.
-    - WARNING: >=50
-    - CRITICAL: >=100
-    """
     critical = [r for r in results if (not r.error and r.encolados >= CRITICAL_THRESHOLD)]
     warning = [r for r in results if (not r.error and WARNING_THRESHOLD <= r.encolados < CRITICAL_THRESHOLD)]
 
@@ -262,9 +201,6 @@ def print_cluster_alerts(cluster: str, results: List[Result]) -> None:
 
 
 def print_table(cluster: str, results: List[Result]) -> None:
-    """
-    Tabla detallada del cluster. Se colorea la fila completa según encolados.
-    """
     results_sorted = sorted(results, key=lambda r: r.encolados, reverse=True)
 
     headers = ["Timestamp", "Nodo", "Cluster", "Status", "Gauge", "Encolados", "Error"]
@@ -294,56 +230,72 @@ def print_table(cluster: str, results: List[Result]) -> None:
 
 def print_summary(all_results: Dict[str, List[Result]]) -> None:
     """
-    Resumen por cluster, TOP 3 nodos en filas separadas y coloreadas según encolados.
+    Resumen por cluster:
+    - 3 filas (Top1..Top3) por cluster
+    - Colores según encolados
+    - Línea separadora entre clusters
     """
     print("\n============== RESUMEN CLUSTERS ==============")
 
     headers = ["Cluster", "Total Encolados", "Rank", "Nodo", "Encolados", "Errores"]
-    rows: List[List[str]] = []
+
+    # Construimos filas por cluster, y metemos un marcador de separador entre clusters
+    rows_with_separators: List[Tuple[str, Optional[List[str]]]] = []
+    # Tuple: ("ROW" o "SEP", row_data)
 
     for cluster, results in all_results.items():
         total = sum(r.encolados for r in results)
         errors = sum(1 for r in results if r.error)
         sorted_nodes = sorted(results, key=lambda r: r.encolados, reverse=True)
 
-        # 3 filas por cluster (Top1..Top3)
         for rank in range(1, 4):
             if len(sorted_nodes) >= rank:
                 r = sorted_nodes[rank - 1]
-                rows.append([
+                row = [
                     cluster if rank == 1 else "",
                     str(total) if rank == 1 else "",
                     f"Top{rank}",
                     r.nodo,
                     str(r.encolados),
                     str(errors) if rank == 1 else ""
-                ])
+                ]
             else:
-                rows.append([
+                row = [
                     cluster if rank == 1 else "",
                     str(total) if rank == 1 else "",
                     f"Top{rank}",
                     "-",
                     "0",
                     str(errors) if rank == 1 else ""
-                ])
+                ]
+            rows_with_separators.append(("ROW", row))
+
+        # Separador tras cada cluster
+        rows_with_separators.append(("SEP", None))
+
+    # Para calcular anchos necesitamos solo las ROW
+    rows_only = [row for kind, row in rows_with_separators if kind == "ROW" and row is not None]
 
     widths = [len(h) for h in headers]
-    for row in rows:
+    for row in rows_only:
         for i, cell in enumerate(row):
             widths[i] = max(widths[i], len(cell))
 
-    def fmt(vals):
+    def fmt(vals: List[str]) -> str:
         return " | ".join(vals[i].ljust(widths[i]) for i in range(len(vals)))
 
-    sep = "-+-".join("-" * w for w in widths)
+    sep_line = "-+-".join("-" * w for w in widths)          # separador normal tabla
+    cluster_sep_line = "=" * len(sep_line)                 # separador entre clusters (más marcado)
 
     print(fmt(headers))
-    print(sep)
+    print(sep_line)
 
-    # Aquí coloreamos SOLO la fila del top según el valor de encolados (columna 5)
-    for row in rows:
-        # row = [Cluster, Total, Rank, Nodo, Encolados, Errores]
+    for kind, row in rows_with_separators:
+        if kind == "SEP":
+            print(cluster_sep_line)
+            continue
+
+        assert row is not None
         try:
             encolados_val = int(row[4])
         except Exception:
@@ -353,9 +305,6 @@ def print_summary(all_results: Dict[str, List[Result]]) -> None:
         print(colorize(line, encolados_val, has_error=False))
 
 
-# -------------------------
-# Main
-# -------------------------
 def main() -> int:
     now = datetime.now()
     ts_col = now.strftime("%Y-%m-%d %H:%M:%S")
@@ -403,7 +352,6 @@ def main() -> int:
             print(f"\n[{cluster}] Filas añadidas: {len(results)} | CSV mensual: {csv_path}")
 
     print_summary(all_results)
-
     return 0
 
 
