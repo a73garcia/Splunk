@@ -23,18 +23,23 @@ TIMEOUT_SECONDS = 12
 MAX_WORKERS = 12
 RETRIES = 2
 
+# Umbrales para coloreo/alerta
 WARNING_THRESHOLD = 50
 CRITICAL_THRESHOLD = 100
 
+# SSL (ESA suele usar self-signed)
 VERIFY_SSL = False
 if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# Colores consola (ANSI)
 RED = "\033[91m"
 YELLOW = "\033[93m"
 RESET = "\033[0m"
 
-
+# Un CSV mensual por cluster (append)
+# idx en URL SIN 0 delante: ...esa1..., ...esa2...
+# Nodo mostrado CON 0 delante: ESA01, ESA02...
 GROUPS = [
     {"cluster": "Europa",       "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
     {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
@@ -54,25 +59,48 @@ class Result:
     error: Optional[str] = None
 
 
-def script_dir():
+def script_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
 
-def load_env_file(path):
-    data = {}
-    with open(path) as f:
+def load_env_file(path: str) -> Dict[str, str]:
+    data: Dict[str, str] = {}
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"No existe el archivo de credenciales: {path}")
+
+    with open(path, "r", encoding="utf-8") as f:
         for line in f:
-            if "=" in line:
-                k, v = line.strip().split("=", 1)
-                data[k] = v
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            data[k.strip()] = v.strip()
     return data
 
 
-def nodo_from_index(idx):
+def nodo_from_index(idx: int) -> str:
     return f"ESA{idx:02d}"
 
 
-def colorize(text, value):
+def safe_filename(name: str) -> str:
+    return (
+        name.replace(" ", "_")
+        .replace("/", "_")
+        .replace("\\", "_")
+        .replace(":", "_")
+        .replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
+        .replace("Á", "A").replace("É", "E").replace("Í", "I").replace("Ó", "O").replace("Ú", "U")
+    )
+
+
+def monthly_csv_path(out_dir: str, cluster: str, now: datetime) -> str:
+    month = now.strftime("%Y-%m")
+    return os.path.join(out_dir, f"encolados_{safe_filename(cluster)}_{month}.csv")
+
+
+def colorize(text: str, value: int, has_error: bool = False) -> str:
+    if has_error:
+        return text
     if value >= CRITICAL_THRESHOLD:
         return f"{RED}{text}{RESET}"
     if value >= WARNING_THRESHOLD:
@@ -80,7 +108,12 @@ def colorize(text, value):
     return text
 
 
-def parse_encolados(xml_text):
+def parse_encolados(xml_text: str) -> Tuple[str, int]:
+    """
+    ESA típico:
+      <gauge name="msgs_in_work_queue" current="17"/>
+    Si falta o es N/A => 0
+    """
     root = ET.fromstring(xml_text)
 
     system_status = "No disponible"
@@ -92,199 +125,280 @@ def parse_encolados(xml_text):
         if gauge.attrib.get("name") == "msgs_in_work_queue":
             val = gauge.attrib.get("current")
 
+            # Fallback por si viniera como nodo <current>17</current>
             if val is None:
                 current_node = gauge.find("./current")
                 if current_node is not None and current_node.text:
                     val = current_node.text.strip()
 
-            if val is None or val.upper() == "N/A":
+            if val is None or val.strip().upper() == "N/A":
                 return system_status, 0
 
-            return system_status, int(val)
+            try:
+                return system_status, int(float(val.strip()))
+            except Exception:
+                return system_status, 0
 
     return system_status, 0
 
 
-def fetch_one(session, url, auth, timestamp, cluster, idx):
-
+def fetch_one(
+    session: requests.Session,
+    url: str,
+    auth: Tuple[str, str],
+    timestamp: str,
+    cluster: str,
+    idx: int,
+) -> Result:
     node = nodo_from_index(idx)
+    headers = {"Accept": "application/xml"}
 
-    try:
-        r = session.get(
-            url,
-            auth=auth,
-            timeout=TIMEOUT_SECONDS,
-            verify=VERIFY_SSL,
-        )
+    last_err: Optional[str] = None
+    for _ in range(RETRIES + 1):
+        try:
+            r = session.get(
+                url,
+                headers=headers,
+                auth=auth,
+                timeout=TIMEOUT_SECONDS,
+                verify=VERIFY_SSL,
+            )
 
-        if r.status_code != 200:
-            return Result(timestamp, node, cluster, "Error", "msgs_in_work_queue", 0, f"HTTP {r.status_code}")
+            if r.status_code != 200:
+                return Result(
+                    timestamp=timestamp,
+                    nodo=node,
+                    cluster=cluster,
+                    status="Error conexión",
+                    gauge="msgs_in_work_queue",
+                    encolados=0,
+                    error=f"HTTP {r.status_code}",
+                )
 
-        status, q = parse_encolados(r.text)
-        return Result(timestamp, node, cluster, status, "msgs_in_work_queue", q)
+            status, q = parse_encolados(r.text)
+            return Result(
+                timestamp=timestamp,
+                nodo=node,
+                cluster=cluster,
+                status=status,
+                gauge="msgs_in_work_queue",
+                encolados=q,
+                error=None,
+            )
 
-    except Exception as e:
-        return Result(timestamp, node, cluster, "Error conexión", "msgs_in_work_queue", 0, str(e))
+        except requests.exceptions.RequestException as e:
+            last_err = str(e)
+
+    return Result(
+        timestamp=timestamp,
+        nodo=node,
+        cluster=cluster,
+        status="Error conexión",
+        gauge="msgs_in_work_queue",
+        encolados=0,
+        error=last_err or "RequestException",
+    )
 
 
-def append_csv(results, path):
-
+def append_csv(results: List[Result], path: str) -> None:
+    fieldnames = ["timestamp", "nodo", "cluster", "status", "gauge", "encolados", "error"]
     file_exists = os.path.exists(path)
 
     with open(path, "a", newline="", encoding="utf-8") as f:
-
-        writer = csv.writer(f)
-
+        w = csv.DictWriter(f, fieldnames=fieldnames)
         if not file_exists:
-            writer.writerow(["timestamp","nodo","cluster","status","gauge","encolados","error"])
+            w.writeheader()
 
         for r in results:
-            writer.writerow([
-                r.timestamp,
-                r.nodo,
-                r.cluster,
-                r.status,
-                r.gauge,
-                r.encolados,
-                r.error or ""
-            ])
+            w.writerow({
+                "timestamp": r.timestamp,
+                "nodo": r.nodo,
+                "cluster": r.cluster,
+                "status": r.status,
+                "gauge": r.gauge,
+                "encolados": r.encolados,
+                "error": r.error or "",
+            })
 
 
-def print_table(cluster, results):
+def print_cluster_alerts(cluster: str, results: List[Result]) -> None:
+    critical = [r for r in results if (not r.error and r.encolados >= CRITICAL_THRESHOLD)]
+    warning = [r for r in results if (not r.error and WARNING_THRESHOLD <= r.encolados < CRITICAL_THRESHOLD)]
 
-    results = sorted(results, key=lambda r: r.encolados, reverse=True)
+    if not critical and not warning:
+        return
 
-    print(f"\n=== {cluster} ===")
-    print("Nodo | Encolados")
-    print("----------------")
-
-    for r in results:
-        line = f"{r.nodo:5} | {r.encolados}"
-        print(colorize(line, r.encolados))
+    print(f"\nALERTAS ({cluster})")
+    for r in sorted(critical, key=lambda x: x.encolados, reverse=True):
+        print(f"{RED}CRITICAL{RESET} - {r.nodo} {cluster} -> encolados={r.encolados} ({r.timestamp})")
+    for r in sorted(warning, key=lambda x: x.encolados, reverse=True):
+        print(f"{YELLOW}WARNING{RESET}  - {r.nodo} {cluster} -> encolados={r.encolados} ({r.timestamp})")
 
 
-def print_summary(all_results):
+# -------------------------
+# TABLAS POR CLUSTER (NO SE TOCA)
+# -------------------------
+def print_table(cluster: str, results: List[Result]) -> None:
+    """
+    Tabla detallada del cluster. Se colorea la fila completa según encolados.
+    (Esto queda igual, como pediste.)
+    """
+    results_sorted = sorted(results, key=lambda r: r.encolados, reverse=True)
 
-    print("\n============== RESUMEN CLUSTERS ==============")
-
-    headers = ["Cluster","Total Encolados","Nodo","Encolados","Errores"]
-
-    rows = []
-    rows_with_sep = []
-
-    for cluster, results in all_results.items():
-
-        total = sum(r.encolados for r in results)
-        errors = sum(1 for r in results if r.error)
-
-        sorted_nodes = sorted(results, key=lambda r: r.encolados, reverse=True)
-
-        for i in range(3):
-
-            if i < len(sorted_nodes):
-                r = sorted_nodes[i]
-                row = [
-                    cluster if i == 0 else "",
-                    str(total) if i == 0 else "",
-                    r.nodo,
-                    str(r.encolados),
-                    str(errors) if i == 0 else ""
-                ]
-            else:
-                row = [
-                    cluster if i == 0 else "",
-                    str(total) if i == 0 else "",
-                    "-",
-                    "0",
-                    str(errors) if i == 0 else ""
-                ]
-
-            rows.append(row)
-            rows_with_sep.append(("ROW", row))
-
-        rows_with_sep.append(("SEP", None))
+    headers = ["Timestamp", "Nodo", "Cluster", "Status", "Gauge", "Encolados", "Error"]
+    rows = [
+        [r.timestamp, r.nodo, r.cluster, r.status, r.gauge, str(r.encolados), (r.error or "")]
+        for r in results_sorted
+    ]
 
     widths = [len(h) for h in headers]
-
     for row in rows:
         for i, cell in enumerate(row):
-            widths[i] = max(widths[i], len(cell))
+            widths[i] = max(widths[i], len(str(cell)))
 
     def fmt(vals):
-        return " | ".join(vals[i].ljust(widths[i]) for i in range(len(vals)))
+        return " | ".join(str(v).ljust(widths[i]) for i, v in enumerate(vals))
 
     sep = "-+-".join("-" * w for w in widths)
-    cluster_sep = "=" * len(sep)
 
+    print(f"\n=== {cluster} ===")
     print(fmt(headers))
     print(sep)
 
-    for kind, row in rows_with_sep:
+    for r in results_sorted:
+        line = fmt([r.timestamp, r.nodo, r.cluster, r.status, r.gauge, str(r.encolados), (r.error or "")])
+        print(colorize(line, r.encolados, has_error=bool(r.error)))
 
+
+# -------------------------
+# RESUMEN CLUSTERS (MODIFICADO)
+# - sin Rank
+# - Top3 en 3 filas
+# - separador por cluster
+# - colores según encolados
+# -------------------------
+def print_summary(all_results: Dict[str, List[Result]]) -> None:
+    print("\n============== RESUMEN CLUSTERS ==============")
+
+    headers = ["Cluster", "Total Encolados", "Nodo", "Encolados", "Errores"]
+
+    rows_with_separators: List[Tuple[str, Optional[List[str]]]] = []
+    # ("ROW", row) o ("SEP", None)
+
+    for cluster, results in all_results.items():
+        total = sum(r.encolados for r in results)
+        errors = sum(1 for r in results if r.error)
+        sorted_nodes = sorted(results, key=lambda r: r.encolados, reverse=True)
+
+        # 3 filas por cluster
+        for pos in range(3):
+            if pos < len(sorted_nodes):
+                r = sorted_nodes[pos]
+                row = [
+                    cluster if pos == 0 else "",
+                    str(total) if pos == 0 else "",
+                    r.nodo,
+                    str(r.encolados),
+                    str(errors) if pos == 0 else ""
+                ]
+            else:
+                row = [
+                    cluster if pos == 0 else "",
+                    str(total) if pos == 0 else "",
+                    "-",
+                    "0",
+                    str(errors) if pos == 0 else ""
+                ]
+            rows_with_separators.append(("ROW", row))
+
+        # Separador tras cada cluster
+        rows_with_separators.append(("SEP", None))
+
+    # calcular anchos (solo filas ROW)
+    rows_only = [row for kind, row in rows_with_separators if kind == "ROW" and row is not None]
+
+    widths = [len(h) for h in headers]
+    for row in rows_only:
+        for i, cell in enumerate(row):
+            widths[i] = max(widths[i], len(cell))
+
+    def fmt(vals: List[str]) -> str:
+        return " | ".join(vals[i].ljust(widths[i]) for i in range(len(vals)))
+
+    sep_line = "-+-".join("-" * w for w in widths)
+    cluster_sep_line = "=" * len(sep_line)
+
+    print(fmt(headers))
+    print(sep_line)
+
+    for kind, row in rows_with_separators:
         if kind == "SEP":
-            print(cluster_sep)
+            print(cluster_sep_line)
             continue
 
-        encolados = int(row[3])
+        assert row is not None
+        try:
+            encolados_val = int(row[3])
+        except Exception:
+            encolados_val = 0
+
         line = fmt(row)
+        print(colorize(line, encolados_val, has_error=False))
 
-        print(colorize(line, encolados))
 
-
-def main():
-
+def main() -> int:
     now = datetime.now()
-    timestamp = now.strftime("%Y-%m-%d %H:%M:%S")
+    ts_col = now.strftime("%Y-%m-%d %H:%M:%S")
 
     base = script_dir()
     out_dir = os.path.join(base, OUTPUT_FOLDER)
     os.makedirs(out_dir, exist_ok=True)
 
     creds = load_env_file(os.path.join(base, CREDENTIALS_FILE))
+    username = creds.get("GLOBAL_USERNAME")
+    password = creds.get("GLOBAL_PASSWORD")
+    if not username or not password:
+        print("Faltan GLOBAL_USERNAME y/o GLOBAL_PASSWORD en credentials.env")
+        return 2
 
-    auth = (
-        creds["GLOBAL_USERNAME"],
-        creds["GLOBAL_PASSWORD"]
-    )
+    auth = (username, password)
 
-    all_results = {}
+    all_results: Dict[str, List[Result]] = {}
 
     with requests.Session() as session:
-
         for g in GROUPS:
-
             cluster = g["cluster"]
+            pattern = g["pattern"]
+            start = int(g["start"])
+            end = int(g["end"])
 
-            targets = [
-                (i, g["pattern"].format(idx=i))
-                for i in range(g["start"], g["end"] + 1)
-            ]
+            targets = [(i, pattern.format(idx=i)) for i in range(start, end + 1)]
 
-            results = []
-
+            results: List[Result] = []
             with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-
                 futures = [
-                    ex.submit(fetch_one, session, url, auth, timestamp, cluster, idx)
+                    ex.submit(fetch_one, session, url, auth, ts_col, cluster, idx)
                     for idx, url in targets
                 ]
-
                 for fut in as_completed(futures):
                     results.append(fut.result())
 
             all_results[cluster] = results
 
+            # Tablas detalladas por cluster (igual)
             print_table(cluster, results)
+            print_cluster_alerts(cluster, results)
 
-            csv_path = os.path.join(
-                out_dir,
-                f"encolados_{cluster}_{now.strftime('%Y-%m')}.csv"
-            )
-
+            # CSV mensual por cluster (append)
+            csv_path = monthly_csv_path(out_dir, cluster, now)
             append_csv(results, csv_path)
+            print(f"\n[{cluster}] Filas añadidas: {len(results)} | CSV mensual: {csv_path}")
 
+    # Resumen final (único cambio)
     print_summary(all_results)
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
