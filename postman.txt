@@ -1,26 +1,55 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+"""
+Monitoreo Cisco ESA (/xml/status) - Postman -> Python
+
+- Lee credenciales desde credentials.env (misma carpeta)
+- Consulta en paralelo un rango de servidores (por defecto 1..20)
+- Soporta certificados self-signed (verify=False) y silencia warnings
+- Extrae:
+    - status/system/@status
+    - gauge name="msgs_in_work_queue" -> current
+- Imprime tabla en consola
+- Guarda CSV con timestamp (columna) y timestamp en nombre de archivo
+"""
+
 import os
 import re
 import csv
 from dataclasses import dataclass
 from typing import Optional, List, Tuple, Dict
 from datetime import datetime
+
 import requests
+import urllib3
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-
 # -------------------------
-# Config
+# Config por defecto
 # -------------------------
 CREDENTIALS_FILE = "credentials.env"  # mismo directorio del script
-SERVER_PATTERN = "https://dh529-esa{idx}.cs32.iphmx.com"
+
+# Patrón de host (edítalo si cambia tu naming)
+SERVER_PATTERN = "https://dh529-esa{idx}.c3s2.iphmx.com"
+
+# Rango de servidores
 START_IDX = 1
 END_IDX = 20
+
+# Concurrencia / red
 TIMEOUT_SECONDS = 12
 MAX_WORKERS = 10
+RETRIES = 2  # reintentos por host
+
+# SSL (ESA suele usar self-signed)
+VERIFY_SSL = False  # True si tienes CA corporativa instalada y quieres validar
+
+
+# Silenciar warning "InsecureRequestWarning" cuando VERIFY_SSL=False
+if not VERIFY_SSL:
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 @dataclass
@@ -59,6 +88,10 @@ def load_env_file(path: str) -> Dict[str, str]:
 
 
 def get_etiqueta(server_name: str) -> str:
+    """
+    Replica tu lógica de Postman: si contiene dh529 => Europa, si no => Otro.
+    Ajusta aquí si tienes más clústeres.
+    """
     lower = server_name.lower()
     if "dh529" in lower:
         return "Europa"
@@ -68,6 +101,13 @@ def get_etiqueta(server_name: str) -> str:
 def server_name_from_url(base_url: str) -> str:
     base_url = re.sub(r"^https?://", "", base_url)
     return base_url.split("/")[0]
+
+
+def to_number(val: str) -> float:
+    try:
+        return float(val)
+    except Exception:
+        return 0.0
 
 
 def find_msgs_in_work_queue(xml_text: str) -> Tuple[str, str]:
@@ -91,59 +131,69 @@ def find_msgs_in_work_queue(xml_text: str) -> Tuple[str, str]:
     return system_status, "N/A"
 
 
-def to_number(val: str) -> float:
-    try:
-        return float(val)
-    except Exception:
-        return 0.0
-
-
 def fetch_one(session: requests.Session, base_url: str, auth: Tuple[str, str], timestamp: str) -> Result:
+    """
+    Hace GET a /xml/status, parsea y devuelve Result.
+    Incluye reintentos básicos.
+    """
     url = f"{base_url}/xml/status"
     sname = server_name_from_url(base_url)
     etiqueta = get_etiqueta(sname)
 
     headers = {"Accept": "application/xml"}
 
-    try:
-        r = session.get(url, headers=headers, auth=auth, timeout=TIMEOUT_SECONDS)
-        if r.status_code != 200:
+    last_err: Optional[str] = None
+    for attempt in range(RETRIES + 1):
+        try:
+            r = session.get(
+                url,
+                headers=headers,
+                auth=auth,
+                timeout=TIMEOUT_SECONDS,
+                verify=VERIFY_SSL,
+            )
+
+            if r.status_code != 200:
+                return Result(
+                    timestamp=timestamp,
+                    server=sname,
+                    etiqueta=etiqueta,
+                    status="Error en conexión",
+                    gauge_name="Error",
+                    current=f"HTTP {r.status_code}",
+                    error=f"HTTP {r.status_code}",
+                )
+
+            system_status, current_val = find_msgs_in_work_queue(r.text)
             return Result(
                 timestamp=timestamp,
                 server=sname,
                 etiqueta=etiqueta,
-                status="Error en conexión",
-                gauge_name="Error",
-                current=f"HTTP {r.status_code}",
-                error=f"HTTP {r.status_code}",
+                status=system_status,
+                gauge_name="msgs_in_work_queue",
+                current=current_val,
+                error=None,
             )
 
-        system_status, current_val = find_msgs_in_work_queue(r.text)
-        return Result(
-            timestamp=timestamp,
-            server=sname,
-            etiqueta=etiqueta,
-            status=system_status,
-            gauge_name="msgs_in_work_queue",
-            current=current_val,
-        )
+        except requests.exceptions.RequestException as e:
+            last_err = str(e)
 
-    except Exception as e:
-        return Result(
-            timestamp=timestamp,
-            server=sname,
-            etiqueta=etiqueta,
-            status="Error en conexión",
-            gauge_name="Error",
-            current=str(e),
-            error=str(e),
-        )
+    return Result(
+        timestamp=timestamp,
+        server=sname,
+        etiqueta=etiqueta,
+        status="Error en conexión",
+        gauge_name="Error",
+        current=last_err or "RequestException",
+        error=last_err or "RequestException",
+    )
+    # Nota: no capturamos Exception genérica para no esconder bugs reales
 
 
 def print_table(results: List[Result]) -> None:
-    headers = ["Timestamp", "Servidor", "Etiqueta", "Status", "Gauge", "Encolados"]
+    headers = ["Timestamp", "Servidor", "Etiqueta", "Status", "Gauge", "Encolados", "Error"]
     rows = [
-        [r.timestamp, r.server, r.etiqueta, r.status, r.gauge_name, r.current]
+        [r.timestamp, r.server, r.etiqueta, r.status, r.gauge_name, r.current, (r.error or "")]
         for r in results
     ]
 
@@ -181,7 +231,7 @@ def save_csv(results: List[Result], out_path: str) -> None:
 
 
 def main() -> int:
-    # Timestamp único para esta ejecución (para CSV y columna)
+    # Timestamp único de ejecución
     now = datetime.now()
     run_ts_col = now.strftime("%Y-%m-%d %H:%M:%S")
     run_ts_file = now.strftime("%Y%m%d_%H%M%S")
@@ -196,7 +246,12 @@ def main() -> int:
         print("Faltan GLOBAL_USERNAME y/o GLOBAL_PASSWORD en credentials.env")
         return 2
 
-    servers = [SERVER_PATTERN.format(idx=i) for i in range(START_IDX, END_IDX + 1)]
+    # Permite overrides por variables en credentials.env o entorno
+    pattern = os.getenv("SERVER_PATTERN", creds.get("SERVER_PATTERN", SERVER_PATTERN))
+    start_idx = int(os.getenv("START_IDX", creds.get("START_IDX", START_IDX)))
+    end_idx = int(os.getenv("END_IDX", creds.get("END_IDX", END_IDX)))
+
+    servers = [pattern.format(idx=i) for i in range(start_idx, end_idx + 1)]
     auth = (username, password)
 
     results: List[Result] = []
@@ -206,7 +261,7 @@ def main() -> int:
             for fut in as_completed(futures):
                 results.append(fut.result())
 
-    # Orden descendente por encolados
+    # Orden descendente por encolados (si no numérico, cae a 0)
     results.sort(key=lambda r: to_number(r.current), reverse=True)
 
     # Mostrar por pantalla
