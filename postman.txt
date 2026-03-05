@@ -15,12 +15,11 @@ Monitor Cisco ESA (/xml/status) - Encolados por cluster
    - Cluster: Europa, Aplicaciones, América, Brasil
 ✅ Encolados: N/A o ausente => 0
 ✅ Consola:
-   - Tabla completa por cluster (ordenada por encolados desc)
-   - Colorea filas: >=100 rojo, 50-99 amarillo
-   - ALERTAS en texto:
-        - WARNING (>=50)
-        - CRITICAL (>=100)
-   - Tabla resumen final por cluster (total, top, errores)
+   - Tabla completa por cluster (ordenada por encolados desc) con colores:
+        - >=100 rojo
+        - 50-99 amarillo
+   - ALERTAS en texto (WARNING/CRITICAL)
+   - Resumen final por cluster con TOP 3 en filas (Top1/Top2/Top3) y colores
 ✅ Persistencia:
    - Carpeta encolados/
    - 1 CSV por cluster y por mes (append): encolados_<Cluster>_YYYY-MM.csv
@@ -66,30 +65,10 @@ RESET = "\033[0m"
 # idx en URL SIN 0 delante: ...esa1..., ...esa2...
 # Nodo mostrado CON 0 delante: ESA01, ESA02...
 GROUPS = [
-    {
-        "cluster": "Europa",
-        "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status",
-        "start": 1,
-        "end": 20,
-    },
-    {
-        "cluster": "Aplicaciones",
-        "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status",
-        "start": 1,
-        "end": 20,
-    },
-    {
-        "cluster": "América",
-        "pattern": "https://dh5504-esa{idx}.c3s2.iphmx.com/xml/status",
-        "start": 1,
-        "end": 20,
-    },
-    {
-        "cluster": "Brasil",
-        "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status",
-        "start": 1,
-        "end": 20,
-    },
+    {"cluster": "Europa",       "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
+    {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
+    {"cluster": "América",      "pattern": "https://dh5504-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
+    {"cluster": "Brasil",       "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status",      "start": 1, "end": 20},
 ]
 
 
@@ -139,22 +118,27 @@ def safe_filename(name: str) -> str:
         .replace("/", "_")
         .replace("\\", "_")
         .replace(":", "_")
-        .replace("á", "a")
-        .replace("é", "e")
-        .replace("í", "i")
-        .replace("ó", "o")
-        .replace("ú", "u")
-        .replace("Á", "A")
-        .replace("É", "E")
-        .replace("Í", "I")
-        .replace("Ó", "O")
-        .replace("Ú", "U")
+        .replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
+        .replace("Á", "A").replace("É", "E").replace("Í", "I").replace("Ó", "O").replace("Ú", "U")
     )
 
 
 def monthly_csv_path(out_dir: str, cluster: str, now: datetime) -> str:
     month = now.strftime("%Y-%m")
     return os.path.join(out_dir, f"encolados_{safe_filename(cluster)}_{month}.csv")
+
+
+def colorize(text: str, value: int, has_error: bool = False) -> str:
+    """
+    Colorea una línea/celda según valor (si no hay error).
+    """
+    if has_error:
+        return text
+    if value >= CRITICAL_THRESHOLD:
+        return f"{RED}{text}{RESET}"
+    if value >= WARNING_THRESHOLD:
+        return f"{YELLOW}{text}{RESET}"
+    return text
 
 
 # -------------------------
@@ -220,39 +204,15 @@ def fetch_one(
             )
 
             if r.status_code != 200:
-                return Result(
-                    timestamp=timestamp,
-                    nodo=node,
-                    cluster=cluster,
-                    status="Error conexión",
-                    gauge="msgs_in_work_queue",
-                    encolados=0,
-                    error=f"HTTP {r.status_code}",
-                )
+                return Result(timestamp, node, cluster, "Error conexión", "msgs_in_work_queue", 0, f"HTTP {r.status_code}")
 
             status, q = parse_encolados(r.text)
-            return Result(
-                timestamp=timestamp,
-                nodo=node,
-                cluster=cluster,
-                status=status,
-                gauge="msgs_in_work_queue",
-                encolados=q,
-                error=None,
-            )
+            return Result(timestamp, node, cluster, status, "msgs_in_work_queue", q, None)
 
         except requests.exceptions.RequestException as e:
             last_err = str(e)
 
-    return Result(
-        timestamp=timestamp,
-        nodo=node,
-        cluster=cluster,
-        status="Error conexión",
-        gauge="msgs_in_work_queue",
-        encolados=0,
-        error=last_err or "RequestException",
-    )
+    return Result(timestamp, node, cluster, "Error conexión", "msgs_in_work_queue", 0, last_err or "RequestException")
 
 
 # -------------------------
@@ -268,17 +228,15 @@ def append_csv(results: List[Result], path: str) -> None:
             w.writeheader()
 
         for r in results:
-            w.writerow(
-                {
-                    "timestamp": r.timestamp,
-                    "nodo": r.nodo,
-                    "cluster": r.cluster,
-                    "status": r.status,
-                    "gauge": r.gauge,
-                    "encolados": r.encolados,
-                    "error": r.error or "",
-                }
-            )
+            w.writerow({
+                "timestamp": r.timestamp,
+                "nodo": r.nodo,
+                "cluster": r.cluster,
+                "status": r.status,
+                "gauge": r.gauge,
+                "encolados": r.encolados,
+                "error": r.error or "",
+            })
 
 
 # -------------------------
@@ -299,12 +257,14 @@ def print_cluster_alerts(cluster: str, results: List[Result]) -> None:
     print(f"\nALERTAS ({cluster})")
     for r in sorted(critical, key=lambda x: x.encolados, reverse=True):
         print(f"{RED}CRITICAL{RESET} - {r.nodo} {cluster} -> encolados={r.encolados} ({r.timestamp})")
-
     for r in sorted(warning, key=lambda x: x.encolados, reverse=True):
         print(f"{YELLOW}WARNING{RESET}  - {r.nodo} {cluster} -> encolados={r.encolados} ({r.timestamp})")
 
 
 def print_table(cluster: str, results: List[Result]) -> None:
+    """
+    Tabla detallada del cluster. Se colorea la fila completa según encolados.
+    """
     results_sorted = sorted(results, key=lambda r: r.encolados, reverse=True)
 
     headers = ["Timestamp", "Nodo", "Cluster", "Status", "Gauge", "Encolados", "Error"]
@@ -329,35 +289,44 @@ def print_table(cluster: str, results: List[Result]) -> None:
 
     for r in results_sorted:
         line = fmt([r.timestamp, r.nodo, r.cluster, r.status, r.gauge, str(r.encolados), (r.error or "")])
-
-        # Si hay error, no coloreamos por cola (se ve en la columna Error)
-        if r.error:
-            print(line)
-            continue
-
-        if r.encolados >= CRITICAL_THRESHOLD:
-            print(f"{RED}{line}{RESET}")
-        elif r.encolados >= WARNING_THRESHOLD:
-            print(f"{YELLOW}{line}{RESET}")
-        else:
-            print(line)
+        print(colorize(line, r.encolados, has_error=bool(r.error)))
 
 
 def print_summary(all_results: Dict[str, List[Result]]) -> None:
+    """
+    Resumen por cluster, TOP 3 nodos en filas separadas y coloreadas según encolados.
+    """
     print("\n============== RESUMEN CLUSTERS ==============")
 
-    headers = ["Cluster", "Total Encolados", "Nodo Máximo", "Top 3 Nodos", "Errores"]
+    headers = ["Cluster", "Total Encolados", "Rank", "Nodo", "Encolados", "Errores"]
     rows: List[List[str]] = []
 
     for cluster, results in all_results.items():
         total = sum(r.encolados for r in results)
+        errors = sum(1 for r in results if r.error)
         sorted_nodes = sorted(results, key=lambda r: r.encolados, reverse=True)
 
-        max_node = sorted_nodes[0].nodo if sorted_nodes else "-"
-        top3 = ", ".join([f"{r.nodo}:{r.encolados}" for r in sorted_nodes[:3]]) if sorted_nodes else "-"
-        errors = sum(1 for r in results if r.error)
-
-        rows.append([cluster, str(total), max_node, top3, str(errors)])
+        # 3 filas por cluster (Top1..Top3)
+        for rank in range(1, 4):
+            if len(sorted_nodes) >= rank:
+                r = sorted_nodes[rank - 1]
+                rows.append([
+                    cluster if rank == 1 else "",
+                    str(total) if rank == 1 else "",
+                    f"Top{rank}",
+                    r.nodo,
+                    str(r.encolados),
+                    str(errors) if rank == 1 else ""
+                ])
+            else:
+                rows.append([
+                    cluster if rank == 1 else "",
+                    str(total) if rank == 1 else "",
+                    f"Top{rank}",
+                    "-",
+                    "0",
+                    str(errors) if rank == 1 else ""
+                ])
 
     widths = [len(h) for h in headers]
     for row in rows:
@@ -371,8 +340,17 @@ def print_summary(all_results: Dict[str, List[Result]]) -> None:
 
     print(fmt(headers))
     print(sep)
+
+    # Aquí coloreamos SOLO la fila del top según el valor de encolados (columna 5)
     for row in rows:
-        print(fmt(row))
+        # row = [Cluster, Total, Rank, Nodo, Encolados, Errores]
+        try:
+            encolados_val = int(row[4])
+        except Exception:
+            encolados_val = 0
+
+        line = fmt(row)
+        print(colorize(line, encolados_val, has_error=False))
 
 
 # -------------------------
@@ -417,18 +395,13 @@ def main() -> int:
 
             all_results[cluster] = results
 
-            # Tabla completa por cluster + coloreo
             print_table(cluster, results)
-
-            # Alertas por cluster (texto)
             print_cluster_alerts(cluster, results)
 
-            # Append a CSV mensual del cluster
             csv_path = monthly_csv_path(out_dir, cluster, now)
             append_csv(results, csv_path)
             print(f"\n[{cluster}] Filas añadidas: {len(results)} | CSV mensual: {csv_path}")
 
-    # Resumen final
     print_summary(all_results)
 
     return 0
