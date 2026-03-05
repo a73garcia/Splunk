@@ -16,6 +16,10 @@ Monitor Cisco ESA (/xml/status) - Encolados por cluster
 ✅ Encolados: N/A o ausente => 0
 ✅ Consola:
    - Tabla completa por cluster (ordenada por encolados desc)
+   - Colorea filas: >=100 rojo, 50-99 amarillo
+   - ALERTAS en texto:
+        - WARNING (>=50)
+        - CRITICAL (>=100)
    - Tabla resumen final por cluster (total, top, errores)
 ✅ Persistencia:
    - Carpeta encolados/
@@ -44,10 +48,19 @@ TIMEOUT_SECONDS = 12
 MAX_WORKERS = 12
 RETRIES = 2
 
+# Umbrales para coloreo/alerta
+WARNING_THRESHOLD = 50
+CRITICAL_THRESHOLD = 100
+
 # SSL (ESA suele usar self-signed)
 VERIFY_SSL = False
 if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Colores consola (ANSI)
+RED = "\033[91m"
+YELLOW = "\033[93m"
+RESET = "\033[0m"
 
 # Un CSV mensual por cluster (append)
 # idx en URL SIN 0 delante: ...esa1..., ...esa2...
@@ -269,8 +282,28 @@ def append_csv(results: List[Result], path: str) -> None:
 
 
 # -------------------------
-# Output: Console tables
+# Output: Console tables + Alerts
 # -------------------------
+def print_cluster_alerts(cluster: str, results: List[Result]) -> None:
+    """
+    Muestra alertas por consola según umbrales.
+    - WARNING: >=50
+    - CRITICAL: >=100
+    """
+    critical = [r for r in results if (not r.error and r.encolados >= CRITICAL_THRESHOLD)]
+    warning = [r for r in results if (not r.error and WARNING_THRESHOLD <= r.encolados < CRITICAL_THRESHOLD)]
+
+    if not critical and not warning:
+        return
+
+    print(f"\nALERTAS ({cluster})")
+    for r in sorted(critical, key=lambda x: x.encolados, reverse=True):
+        print(f"{RED}CRITICAL{RESET} - {r.nodo} {cluster} -> encolados={r.encolados} ({r.timestamp})")
+
+    for r in sorted(warning, key=lambda x: x.encolados, reverse=True):
+        print(f"{YELLOW}WARNING{RESET}  - {r.nodo} {cluster} -> encolados={r.encolados} ({r.timestamp})")
+
+
 def print_table(cluster: str, results: List[Result]) -> None:
     results_sorted = sorted(results, key=lambda r: r.encolados, reverse=True)
 
@@ -293,16 +326,29 @@ def print_table(cluster: str, results: List[Result]) -> None:
     print(f"\n=== {cluster} ===")
     print(fmt(headers))
     print(sep)
-    for row in rows:
-        print(fmt(row))
+
+    for r in results_sorted:
+        line = fmt([r.timestamp, r.nodo, r.cluster, r.status, r.gauge, str(r.encolados), (r.error or "")])
+
+        # Si hay error, no coloreamos por cola (se ve en la columna Error)
+        if r.error:
+            print(line)
+            continue
+
+        if r.encolados >= CRITICAL_THRESHOLD:
+            print(f"{RED}{line}{RESET}")
+        elif r.encolados >= WARNING_THRESHOLD:
+            print(f"{YELLOW}{line}{RESET}")
+        else:
+            print(line)
 
 
 def print_summary(all_results: Dict[str, List[Result]]) -> None:
     print("\n============== RESUMEN CLUSTERS ==============")
 
     headers = ["Cluster", "Total Encolados", "Nodo Máximo", "Top 3 Nodos", "Errores"]
-
     rows: List[List[str]] = []
+
     for cluster, results in all_results.items():
         total = sum(r.encolados for r in results)
         sorted_nodes = sorted(results, key=lambda r: r.encolados, reverse=True)
@@ -371,8 +417,11 @@ def main() -> int:
 
             all_results[cluster] = results
 
-            # Tabla completa por cluster
+            # Tabla completa por cluster + coloreo
             print_table(cluster, results)
+
+            # Alertas por cluster (texto)
+            print_cluster_alerts(cluster, results)
 
             # Append a CSV mensual del cluster
             csv_path = monthly_csv_path(out_dir, cluster, now)
