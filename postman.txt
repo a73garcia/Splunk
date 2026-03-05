@@ -29,7 +29,6 @@ if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Cada cluster con su patrón de URL (idx sin 0 delante en URL)
-# Nota: el 0 delante SOLO en el "Nodo" mostrado (ESA01), no en la URL.
 GROUPS = [
     {
         "cluster": "Europa",  # E mayúscula
@@ -51,7 +50,7 @@ GROUPS = [
     },
     {
         "cluster": "Brasil",
-        "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status",  # <- SIN c3s2
+        "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status",  # SIN c3s2
         "start": 1,
         "end": 20,
     },
@@ -89,7 +88,7 @@ def load_env_file(path: str) -> Dict[str, str]:
 
 
 def nodo_from_index(idx: int) -> str:
-    # Solo en resultados: ESA01..ESA09..ESA10..
+    # Solo para mostrar: ESA01..ESA09..ESA10..
     return f"ESA{idx:02d}"
 
 
@@ -109,7 +108,7 @@ def parse_encolados(xml_text: str) -> Tuple[str, int]:
         if gauge.attrib.get("name") == "msgs_in_work_queue":
             val = gauge.attrib.get("current")
 
-            # Fallback por si viniera como nodo <current>
+            # fallback por si viniera como nodo <current>
             if val is None:
                 current_node = gauge.find("./current")
                 if current_node is not None and current_node.text:
@@ -132,7 +131,7 @@ def fetch_one(
     auth: Tuple[str, str],
     timestamp: str,
     cluster: str,
-    idx: int
+    idx: int,
 ) -> Result:
     node = nodo_from_index(idx)
     headers = {"Accept": "application/xml"}
@@ -184,32 +183,7 @@ def fetch_one(
     )
 
 
-def print_table(cluster: str, results: List[Result]) -> None:
-    headers = ["Timestamp", "Nodo", "Cluster", "Status", "Gauge", "Encolados", "Error"]
-    rows = [
-        [r.timestamp, r.nodo, r.cluster, r.status, r.gauge, str(r.encolados), (r.error or "")]
-        for r in results
-    ]
-
-    widths = [len(h) for h in headers]
-    for row in rows:
-        for i, cell in enumerate(row):
-            widths[i] = max(widths[i], len(str(cell)))
-
-    def fmt(vals):
-        return " | ".join(str(v).ljust(widths[i]) for i, v in enumerate(vals))
-
-    sep = "-+-".join("-" * w for w in widths)
-
-    print(f"\n=== {cluster} ===")
-    print(fmt(headers))
-    print(sep)
-    for row in rows:
-        print(fmt(row))
-
-
 def safe_filename(name: str) -> str:
-    # Para Windows: sin espacios ni caracteres conflictivos; normaliza acentos básico
     return (
         name.replace(" ", "_")
             .replace("/", "_").replace("\\", "_").replace(":", "_")
@@ -218,11 +192,22 @@ def safe_filename(name: str) -> str:
     )
 
 
-def save_csv(results: List[Result], path: str) -> None:
+def monthly_csv_path(out_dir: str, cluster: str, now: datetime) -> str:
+    month = now.strftime("%Y-%m")  # 2026-03
+    return os.path.join(out_dir, f"encolados_{safe_filename(cluster)}_{month}.csv")
+
+
+def append_csv(results: List[Result], path: str) -> None:
     fieldnames = ["timestamp", "nodo", "cluster", "status", "gauge", "encolados", "error"]
-    with open(path, "w", newline="", encoding="utf-8") as f:
+    file_exists = os.path.exists(path)
+
+    with open(path, "a", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
-        w.writeheader()
+
+        # si es nuevo, cabecera
+        if not file_exists:
+            w.writeheader()
+
         for r in results:
             w.writerow({
                 "timestamp": r.timestamp,
@@ -238,15 +223,11 @@ def save_csv(results: List[Result], path: str) -> None:
 def main() -> int:
     now = datetime.now()
     ts_col = now.strftime("%Y-%m-%d %H:%M:%S")
-    ts_file = now.strftime("%Y%m%d_%H%M%S")
 
     base = script_dir()
-
-    # carpeta encolados
     out_dir = os.path.join(base, OUTPUT_FOLDER)
     os.makedirs(out_dir, exist_ok=True)
 
-    # credenciales
     creds = load_env_file(os.path.join(base, CREDENTIALS_FILE))
     username = creds.get("GLOBAL_USERNAME")
     password = creds.get("GLOBAL_PASSWORD")
@@ -274,14 +255,15 @@ def main() -> int:
                 for fut in as_completed(futures):
                     results.append(fut.result())
 
+            # Orden por encolados desc (solo para mostrar bonito)
             results.sort(key=lambda r: r.encolados, reverse=True)
 
-            print_table(cluster, results)
+            # Append al CSV mensual del cluster
+            csv_path = monthly_csv_path(out_dir, cluster, now)
+            append_csv(results, csv_path)
 
-            csv_name = f"encolados_{safe_filename(cluster)}_{ts_file}.csv"
-            csv_path = os.path.join(out_dir, csv_name)
-            save_csv(results, csv_path)
-            print(f"\nCSV guardado ({cluster}) en: {csv_path}")
+            print(f"\n[{cluster}] Filas añadidas: {len(results)}")
+            print(f"[{cluster}] CSV mensual: {csv_path}")
 
     return 0
 
