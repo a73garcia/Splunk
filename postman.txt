@@ -109,6 +109,14 @@ def to_int(val: Optional[str]) -> int:
         return 0
 
 
+def fmt_num_dot(n: int) -> str:
+    """
+    Separador de miles con punto:
+      1234567 -> 1.234.567
+    """
+    return f"{n:,}".replace(",", ".")
+
+
 def trend_symbol(prev: int, cur: int) -> str:
     if cur > prev:
         return "+"
@@ -128,6 +136,7 @@ def colorize(text: str, encolados_actual: int, has_error: bool = False) -> str:
 
 
 def clear_screen() -> None:
+    # Limpieza ANSI
     print("\033[2J\033[H", end="")
 
 
@@ -214,7 +223,7 @@ def fetch_one(
 
 
 # =========================
-# UI: Table
+# UI: Table + Alerts
 # =========================
 def print_table(cluster: str, results: List[Result], prev_enc: Dict[str, int]) -> None:
     results_sorted = sorted(results, key=lambda r: r.encolados, reverse=True)
@@ -226,13 +235,12 @@ def print_table(cluster: str, results: List[Result], prev_enc: Dict[str, int]) -
         "Error"
     ]
 
-    # Pre-calcular filas y totales
-    rows = []
+    rows: List[List[str]] = []
     total_prev = 0
     total_cur = 0
 
     for r in results_sorted:
-        prev = prev_enc.get(r.nodo, r.encolados)  # primera iteración: prev=cur
+        prev = prev_enc.get(r.nodo, r.encolados)  # primera iteración prev=cur
         cur = r.encolados
         sym = trend_symbol(prev, cur)
 
@@ -243,28 +251,20 @@ def print_table(cluster: str, results: List[Result], prev_enc: Dict[str, int]) -
             r.timestamp,
             r.nodo,
             r.status,
-            str(prev),
-            str(cur),
+            fmt_num_dot(prev),
+            fmt_num_dot(cur),
             sym,
-            str(r.ram),
-            str(r.cpu),
-            str(r.conn_in),
-            str(r.conn_out),
-            str(r.active_recips),
+            fmt_num_dot(r.ram),
+            fmt_num_dot(r.cpu),
+            fmt_num_dot(r.conn_in),
+            fmt_num_dot(r.conn_out),
+            fmt_num_dot(r.active_recips),
             (r.error or "")
         ])
 
-    # Fila TOTAL (la “fila” que indica tendencia global del cluster)
     total_sym = trend_symbol(total_prev, total_cur)
-    total_row = [
-        "", "TOTAL", "",
-        str(total_prev),
-        str(total_cur),
-        total_sym,
-        "", "", "", "", "", ""
-    ]
+    total_row = ["", "TOTAL", "", fmt_num_dot(total_prev), fmt_num_dot(total_cur), total_sym, "", "", "", "", "", ""]
 
-    # Calcular anchos
     widths = [len(h) for h in headers]
     for row in rows + [total_row]:
         for i, cell in enumerate(row):
@@ -283,7 +283,6 @@ def print_table(cluster: str, results: List[Result], prev_enc: Dict[str, int]) -
         line = fmt(row)
         print(colorize(line, r.encolados, has_error=bool(r.error)))
 
-    # Separador y TOTAL (coloreado por total actual, siguiendo la misma lógica)
     print(sep)
     print(colorize(fmt(total_row), total_cur, has_error=False))
 
@@ -295,20 +294,19 @@ def print_alerts(cluster: str, results: List[Result]) -> None:
     if not critical and not warning:
         return
 
-    print("\nALERTAS")
+    print(f"\nALERTAS ({cluster}) - CRITICAL: {len(critical)} | WARNING: {len(warning)}")
+
     for r in sorted(critical, key=lambda x: x.encolados, reverse=True):
-        print(f"{RED}CRITICAL{RESET} - {r.nodo} {cluster} -> encolados={r.encolados}")
+        print(f"{RED}CRITICAL{RESET} - {r.nodo} {cluster} -> encolados={fmt_num_dot(r.encolados)}")
+
     for r in sorted(warning, key=lambda x: x.encolados, reverse=True):
-        print(f"{YELLOW}WARNING{RESET}  - {r.nodo} {cluster} -> encolados={r.encolados}")
+        print(f"{YELLOW}WARNING{RESET}  - {r.nodo} {cluster} -> encolados={fmt_num_dot(r.encolados)}")
 
 
 # =========================
 # ESC listener (cross-platform)
 # =========================
 def start_esc_listener(stop_event: threading.Event) -> None:
-    """
-    Escucha ESC en background y activa stop_event.
-    """
     try:
         import msvcrt  # type: ignore
 
@@ -316,7 +314,7 @@ def start_esc_listener(stop_event: threading.Event) -> None:
             while not stop_event.is_set():
                 if msvcrt.kbhit():
                     ch = msvcrt.getch()
-                    if ch == b"\x1b":  # ESC
+                    if ch == b"\x1b":
                         stop_event.set()
                         return
                 time.sleep(0.05)
@@ -327,7 +325,6 @@ def start_esc_listener(stop_event: threading.Event) -> None:
     except Exception:
         pass
 
-    # POSIX
     import sys
     import select
     import termios
@@ -385,8 +382,10 @@ def run_loop_for_cluster(group: Dict, auth: Tuple[str, str]) -> None:
     stop_event = threading.Event()
     start_esc_listener(stop_event)
 
-    # Memoria de encolados previos por nodo
     prev_encolados: Dict[str, int] = {}
+
+    # Limpieza al entrar al cluster seleccionado
+    clear_screen()
 
     with requests.Session() as session:
         while not stop_event.is_set():
@@ -404,13 +403,12 @@ def run_loop_for_cluster(group: Dict, auth: Tuple[str, str]) -> None:
                 for fut in as_completed(futures):
                     results.append(fut.result())
 
-            # UI
+            # Limpieza en cada actualización
             clear_screen()
             print_table(cluster, results, prev_encolados)
             print_alerts(cluster, results)
             print("\n(Refrescando... pulsa ESC para salir)")
 
-            # Actualizar prev para el siguiente ciclo
             prev_encolados = {r.nodo: r.encolados for r in results}
 
             # Sleep en trozos para reaccionar rápido al ESC
@@ -434,6 +432,10 @@ def main() -> int:
         return 2
 
     group = choose_cluster()
+
+    # Limpieza tras seleccionar opción del menú
+    clear_screen()
+
     run_loop_for_cluster(group, (username, password))
     return 0
 
