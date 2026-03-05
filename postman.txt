@@ -12,6 +12,8 @@ import urllib3
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import matplotlib.pyplot as plt
+
 
 # -------------------------
 # Config
@@ -28,10 +30,10 @@ VERIFY_SSL = False
 if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Cada cluster con su patrón de URL (idx sin 0 delante en URL)
+# Un CSV mensual por cluster (append)
 GROUPS = [
     {
-        "cluster": "Europa",  # E mayúscula
+        "cluster": "Europa",
         "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status",
         "start": 1,
         "end": 20,
@@ -50,7 +52,7 @@ GROUPS = [
     },
     {
         "cluster": "Brasil",
-        "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status",  # SIN c3s2
+        "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status",
         "start": 1,
         "end": 20,
     },
@@ -186,9 +188,19 @@ def fetch_one(
 def safe_filename(name: str) -> str:
     return (
         name.replace(" ", "_")
-            .replace("/", "_").replace("\\", "_").replace(":", "_")
-            .replace("á", "a").replace("é", "e").replace("í", "i").replace("ó", "o").replace("ú", "u")
-            .replace("Á", "A").replace("É", "E").replace("Í", "I").replace("Ó", "O").replace("Ú", "U")
+        .replace("/", "_")
+        .replace("\\", "_")
+        .replace(":", "_")
+        .replace("á", "a")
+        .replace("é", "e")
+        .replace("í", "i")
+        .replace("ó", "o")
+        .replace("ú", "u")
+        .replace("Á", "A")
+        .replace("É", "E")
+        .replace("Í", "I")
+        .replace("Ó", "O")
+        .replace("Ú", "U")
     )
 
 
@@ -203,21 +215,42 @@ def append_csv(results: List[Result], path: str) -> None:
 
     with open(path, "a", newline="", encoding="utf-8") as f:
         w = csv.DictWriter(f, fieldnames=fieldnames)
-
-        # si es nuevo, cabecera
         if not file_exists:
             w.writeheader()
 
         for r in results:
-            w.writerow({
-                "timestamp": r.timestamp,
-                "nodo": r.nodo,
-                "cluster": r.cluster,
-                "status": r.status,
-                "gauge": r.gauge,
-                "encolados": r.encolados,
-                "error": r.error or "",
-            })
+            w.writerow(
+                {
+                    "timestamp": r.timestamp,
+                    "nodo": r.nodo,
+                    "cluster": r.cluster,
+                    "status": r.status,
+                    "gauge": r.gauge,
+                    "encolados": r.encolados,
+                    "error": r.error or "",
+                }
+            )
+
+
+def plot_cluster(cluster: str, timestamp: str, results: List[Result]) -> None:
+    """
+    Muestra una gráfica por cluster (encolados por nodo).
+    Nota: si ejecutas esto en una tarea programada/servicio sin UI, puede no mostrar.
+    """
+    # Ordenado desc para lectura rápida
+    results_sorted = sorted(results, key=lambda r: r.encolados, reverse=True)
+
+    labels = [r.nodo for r in results_sorted]
+    values = [r.encolados for r in results_sorted]
+
+    plt.figure()
+    plt.bar(labels, values)
+    plt.title(f"Encolados - {cluster} ({timestamp})")
+    plt.xlabel("Nodo")
+    plt.ylabel("msgs_in_work_queue")
+    plt.xticks(rotation=70)
+    plt.tight_layout()
+    plt.show()
 
 
 def main() -> int:
@@ -255,15 +288,14 @@ def main() -> int:
                 for fut in as_completed(futures):
                     results.append(fut.result())
 
-            # Orden por encolados desc (solo para mostrar bonito)
-            results.sort(key=lambda r: r.encolados, reverse=True)
-
-            # Append al CSV mensual del cluster
+            # Guardado mensual por cluster (append)
             csv_path = monthly_csv_path(out_dir, cluster, now)
             append_csv(results, csv_path)
 
-            print(f"\n[{cluster}] Filas añadidas: {len(results)}")
-            print(f"[{cluster}] CSV mensual: {csv_path}")
+            # Gráfica en pantalla
+            plot_cluster(cluster, ts_col, results)
+
+            print(f"[{cluster}] Filas añadidas: {len(results)} | CSV: {csv_path}")
 
     return 0
 
