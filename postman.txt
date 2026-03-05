@@ -3,6 +3,7 @@
 
 import os
 import csv
+import re
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Tuple
 from datetime import datetime
@@ -23,7 +24,7 @@ TIMEOUT_SECONDS = 12
 MAX_WORKERS = 12
 RETRIES = 2
 
-# Umbrales para coloreo/alerta
+# Umbrales para coloreo/alerta (según ENCOLADOS)
 WARNING_THRESHOLD = 50
 CRITICAL_THRESHOLD = 100
 
@@ -37,9 +38,7 @@ RED = "\033[91m"
 YELLOW = "\033[93m"
 RESET = "\033[0m"
 
-# Un CSV mensual por cluster (append)
-# idx en URL SIN 0 delante: ...esa1..., ...esa2...
-# Nodo mostrado CON 0 delante: ESA01, ESA02...
+# Clusters
 GROUPS = [
     {"cluster": "Europa",       "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
     {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
@@ -48,17 +47,30 @@ GROUPS = [
 ]
 
 
+# -------------------------
+# Data model
+# -------------------------
 @dataclass
 class Result:
     timestamp: str
     nodo: str
     cluster: str
     status: str
-    gauge: str
+
     encolados: int
+
+    ram: int
+    cpu: int
+    conn_in: int
+    conn_out: int
+    active_recips: int
+
     error: Optional[str] = None
 
 
+# -------------------------
+# Helpers
+# -------------------------
 def script_dir() -> str:
     return os.path.dirname(os.path.abspath(__file__))
 
@@ -79,6 +91,7 @@ def load_env_file(path: str) -> Dict[str, str]:
 
 
 def nodo_from_index(idx: int) -> str:
+    # Solo para mostrar: ESA01..ESA20 (con 0 delante)
     return f"ESA{idx:02d}"
 
 
@@ -98,21 +111,53 @@ def monthly_csv_path(out_dir: str, cluster: str, now: datetime) -> str:
     return os.path.join(out_dir, f"encolados_{safe_filename(cluster)}_{month}.csv")
 
 
-def colorize(text: str, value: int, has_error: bool = False) -> str:
+def colorize(text: str, encolados: int, has_error: bool = False) -> str:
     if has_error:
         return text
-    if value >= CRITICAL_THRESHOLD:
+    if encolados >= CRITICAL_THRESHOLD:
         return f"{RED}{text}{RESET}"
-    if value >= WARNING_THRESHOLD:
+    if encolados >= WARNING_THRESHOLD:
         return f"{YELLOW}{text}{RESET}"
     return text
 
 
-def parse_encolados(xml_text: str) -> Tuple[str, int]:
+def to_int(val: Optional[str]) -> int:
     """
-    ESA típico:
-      <gauge name="msgs_in_work_queue" current="17"/>
-    Si falta o es N/A => 0
+    Convierte a int valores típicos:
+      "23" -> 23
+      "309G" -> 309
+      "N/A" o None -> 0
+    """
+    if val is None:
+        return 0
+    s = str(val).strip()
+    if not s or s.upper() == "N/A":
+        return 0
+    # extrae primer número (entero o decimal)
+    m = re.search(r"(\d+(\.\d+)?)", s)
+    if not m:
+        return 0
+    try:
+        return int(float(m.group(1)))
+    except Exception:
+        return 0
+
+
+# -------------------------
+# XML parsing
+# -------------------------
+def parse_metrics(xml_text: str) -> Tuple[str, Dict[str, int]]:
+    """
+    Extrae status del sistema y gauges:
+      - msgs_in_work_queue
+      - ram_utilization
+      - cpu_utilization
+      - conn_in
+      - conn_out
+      - active_recips
+
+    En ESA vienen como:
+      <gauge name="xxx" current="123"/>
     """
     root = ET.fromstring(xml_text)
 
@@ -121,27 +166,32 @@ def parse_encolados(xml_text: str) -> Tuple[str, int]:
     if sys_node is not None:
         system_status = sys_node.attrib.get("status", system_status)
 
+    wanted = {
+        "msgs_in_work_queue": 0,
+        "ram_utilization": 0,
+        "cpu_utilization": 0,
+        "conn_in": 0,
+        "conn_out": 0,
+        "active_recips": 0,
+    }
+
     for gauge in root.findall(".//gauge"):
-        if gauge.attrib.get("name") == "msgs_in_work_queue":
+        name = gauge.attrib.get("name")
+        if name in wanted:
             val = gauge.attrib.get("current")
-
-            # Fallback por si viniera como nodo <current>17</current>
+            # fallback por si viniera como nodo <current>
             if val is None:
-                current_node = gauge.find("./current")
-                if current_node is not None and current_node.text:
-                    val = current_node.text.strip()
+                cur = gauge.find("./current")
+                if cur is not None and cur.text:
+                    val = cur.text.strip()
+            wanted[name] = to_int(val)
 
-            if val is None or val.strip().upper() == "N/A":
-                return system_status, 0
-
-            try:
-                return system_status, int(float(val.strip()))
-            except Exception:
-                return system_status, 0
-
-    return system_status, 0
+    return system_status, wanted
 
 
+# -------------------------
+# Network
+# -------------------------
 def fetch_one(
     session: requests.Session,
     url: str,
@@ -170,19 +220,23 @@ def fetch_one(
                     nodo=node,
                     cluster=cluster,
                     status="Error conexión",
-                    gauge="msgs_in_work_queue",
                     encolados=0,
+                    ram=0, cpu=0, conn_in=0, conn_out=0, active_recips=0,
                     error=f"HTTP {r.status_code}",
                 )
 
-            status, q = parse_encolados(r.text)
+            status, m = parse_metrics(r.text)
             return Result(
                 timestamp=timestamp,
                 nodo=node,
                 cluster=cluster,
                 status=status,
-                gauge="msgs_in_work_queue",
-                encolados=q,
+                encolados=m["msgs_in_work_queue"],
+                ram=m["ram_utilization"],
+                cpu=m["cpu_utilization"],
+                conn_in=m["conn_in"],
+                conn_out=m["conn_out"],
+                active_recips=m["active_recips"],
                 error=None,
             )
 
@@ -194,14 +248,21 @@ def fetch_one(
         nodo=node,
         cluster=cluster,
         status="Error conexión",
-        gauge="msgs_in_work_queue",
         encolados=0,
+        ram=0, cpu=0, conn_in=0, conn_out=0, active_recips=0,
         error=last_err or "RequestException",
     )
 
 
+# -------------------------
+# Output: CSV (append mensual)
+# -------------------------
 def append_csv(results: List[Result], path: str) -> None:
-    fieldnames = ["timestamp", "nodo", "cluster", "status", "gauge", "encolados", "error"]
+    fieldnames = [
+        "timestamp", "nodo", "cluster", "status",
+        "encolados", "ram", "cpu", "conn_in", "conn_out", "active_recips",
+        "error"
+    ]
     file_exists = os.path.exists(path)
 
     with open(path, "a", newline="", encoding="utf-8") as f:
@@ -215,8 +276,12 @@ def append_csv(results: List[Result], path: str) -> None:
                 "nodo": r.nodo,
                 "cluster": r.cluster,
                 "status": r.status,
-                "gauge": r.gauge,
                 "encolados": r.encolados,
+                "ram": r.ram,
+                "cpu": r.cpu,
+                "conn_in": r.conn_in,
+                "conn_out": r.conn_out,
+                "active_recips": r.active_recips,
                 "error": r.error or "",
             })
 
@@ -236,18 +301,34 @@ def print_cluster_alerts(cluster: str, results: List[Result]) -> None:
 
 
 # -------------------------
-# TABLAS POR CLUSTER (NO SE TOCA)
+# TABLAS POR CLUSTER (misma tabla, pero ampliada con métricas)
 # -------------------------
 def print_table(cluster: str, results: List[Result]) -> None:
     """
-    Tabla detallada del cluster. Se colorea la fila completa según encolados.
-    (Esto queda igual, como pediste.)
+    Tabla detallada del cluster. Se colorea la fila completa según ENCOLADOS.
     """
     results_sorted = sorted(results, key=lambda r: r.encolados, reverse=True)
 
-    headers = ["Timestamp", "Nodo", "Cluster", "Status", "Gauge", "Encolados", "Error"]
+    headers = [
+        "Timestamp", "Nodo", "Cluster", "Status",
+        "Encolados", "RAM", "CPU", "Conn_in", "Conn_out", "Active_recips",
+        "Error"
+    ]
+
     rows = [
-        [r.timestamp, r.nodo, r.cluster, r.status, r.gauge, str(r.encolados), (r.error or "")]
+        [
+            r.timestamp,
+            r.nodo,
+            r.cluster,
+            r.status,
+            str(r.encolados),
+            str(r.ram),
+            str(r.cpu),
+            str(r.conn_in),
+            str(r.conn_out),
+            str(r.active_recips),
+            (r.error or "")
+        ]
         for r in results_sorted
     ]
 
@@ -266,16 +347,20 @@ def print_table(cluster: str, results: List[Result]) -> None:
     print(sep)
 
     for r in results_sorted:
-        line = fmt([r.timestamp, r.nodo, r.cluster, r.status, r.gauge, str(r.encolados), (r.error or "")])
+        line = fmt([
+            r.timestamp, r.nodo, r.cluster, r.status,
+            str(r.encolados), str(r.ram), str(r.cpu), str(r.conn_in), str(r.conn_out), str(r.active_recips),
+            (r.error or "")
+        ])
         print(colorize(line, r.encolados, has_error=bool(r.error)))
 
 
 # -------------------------
-# RESUMEN CLUSTERS (MODIFICADO)
+# RESUMEN CLUSTERS (solo basado en ENCOLADOS)
 # - sin Rank
 # - Top3 en 3 filas
 # - separador por cluster
-# - colores según encolados
+# - colores según ENCOLADOS
 # -------------------------
 def print_summary(all_results: Dict[str, List[Result]]) -> None:
     print("\n============== RESUMEN CLUSTERS ==============")
@@ -283,14 +368,12 @@ def print_summary(all_results: Dict[str, List[Result]]) -> None:
     headers = ["Cluster", "Total Encolados", "Nodo", "Encolados", "Errores"]
 
     rows_with_separators: List[Tuple[str, Optional[List[str]]]] = []
-    # ("ROW", row) o ("SEP", None)
 
     for cluster, results in all_results.items():
         total = sum(r.encolados for r in results)
         errors = sum(1 for r in results if r.error)
         sorted_nodes = sorted(results, key=lambda r: r.encolados, reverse=True)
 
-        # 3 filas por cluster
         for pos in range(3):
             if pos < len(sorted_nodes):
                 r = sorted_nodes[pos]
@@ -311,10 +394,8 @@ def print_summary(all_results: Dict[str, List[Result]]) -> None:
                 ]
             rows_with_separators.append(("ROW", row))
 
-        # Separador tras cada cluster
         rows_with_separators.append(("SEP", None))
 
-    # calcular anchos (solo filas ROW)
     rows_only = [row for kind, row in rows_with_separators if kind == "ROW" and row is not None]
 
     widths = [len(h) for h in headers]
@@ -337,15 +418,14 @@ def print_summary(all_results: Dict[str, List[Result]]) -> None:
             continue
 
         assert row is not None
-        try:
-            encolados_val = int(row[3])
-        except Exception:
-            encolados_val = 0
-
+        encolados_val = to_int(row[3])
         line = fmt(row)
         print(colorize(line, encolados_val, has_error=False))
 
 
+# -------------------------
+# Main
+# -------------------------
 def main() -> int:
     now = datetime.now()
     ts_col = now.strftime("%Y-%m-%d %H:%M:%S")
@@ -385,7 +465,7 @@ def main() -> int:
 
             all_results[cluster] = results
 
-            # Tablas detalladas por cluster (igual)
+            # Tablas detalladas por cluster (ahora con RAM/CPU/CONN/ACTIVE)
             print_table(cluster, results)
             print_cluster_alerts(cluster, results)
 
@@ -394,7 +474,7 @@ def main() -> int:
             append_csv(results, csv_path)
             print(f"\n[{cluster}] Filas añadidas: {len(results)} | CSV mensual: {csv_path}")
 
-    # Resumen final (único cambio)
+    # Resumen final (Top3 por cluster)
     print_summary(all_results)
 
     return 0
