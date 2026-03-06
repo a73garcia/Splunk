@@ -237,9 +237,8 @@ def print_combined_table(
     nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
     ts_width = max(len("Timestamp"), len(timestamp))
-    nodo_width = len("Nodo")
+    nodo_width = len("Nodo") + 1  # un espacio más
 
-    # Anchuras fijas pedidas
     ant_w = 12
     act_w = 12
     var_w = 5
@@ -257,23 +256,24 @@ def print_combined_table(
         )
 
     h1 = (
-        f"{'Timestamp'.ljust(ts_width)}{col_sep}"
+        f"| {'Timestamp'.ljust(ts_width)}{col_sep}"
         f"{'Nodo'.ljust(nodo_width)}{cluster_sep}"
         f"{'Europa'.center(cluster_chunk_width)}{cluster_sep}"
         f"{'América'.center(cluster_chunk_width)}{cluster_sep}"
         f"{'Brasil'.center(cluster_chunk_width)}{cluster_sep}"
-        f"{'Aplicaciones'.center(cluster_chunk_width)}"
+        f"{'Aplicaciones'.center(cluster_chunk_width)} |"
     )
 
     sub = (
-        f"{'Ant'.rjust(ant_w)}{col_sep}"
-        f"{'Act'.rjust(act_w)}{col_sep}"
+        f"{'Ant'.center(ant_w)}{col_sep}"
+        f"{'Act'.center(act_w)}{col_sep}"
         f"{'Var'.center(var_w)}"
     )
+
     h2 = (
-        f"{''.ljust(ts_width)}{col_sep}"
+        f"| {''.ljust(ts_width)}{col_sep}"
         f"{''.ljust(nodo_width)}{cluster_sep}"
-        f"{sub}{cluster_sep}{sub}{cluster_sep}{sub}{cluster_sep}{sub}"
+        f"{sub}{cluster_sep}{sub}{cluster_sep}{sub}{cluster_sep}{sub} |"
     )
 
     sep = "-" * max(len(h1), len(h2))
@@ -284,9 +284,9 @@ def print_combined_table(
     print(sep)
 
     for nodo in nodos:
-        line = f"{timestamp.ljust(ts_width)}{col_sep}{nodo.ljust(nodo_width)}"
+        line = f"| {timestamp.ljust(ts_width)}{col_sep}{nodo.ljust(nodo_width)}"
 
-        for idx, cluster in enumerate(cluster_order):
+        for cluster in cluster_order:
             cur_map = current_data.get(cluster, {})
             prev_map = previous_data.get(cluster, {})
 
@@ -298,19 +298,16 @@ def print_combined_table(
 
             chunk = fmt_chunk(prev_val, cur_val, var_val)
             chunk = colorize_node(chunk, cur_val, has_error=has_error)
+            line += f"{cluster_sep}{chunk}"
 
-            if idx == 0:
-                line += f"{cluster_sep}{chunk}"
-            else:
-                line += f"{cluster_sep}{chunk}"
-
+        line += " |"
         print(line)
 
     print(sep)
 
-    total_line = f"{''.ljust(ts_width)}{col_sep}{'TOTAL'.ljust(nodo_width)}"
+    total_line = f"| {''.ljust(ts_width)}{col_sep}{'TOTAL'.ljust(nodo_width)}"
 
-    for idx, cluster in enumerate(cluster_order):
+    for cluster in cluster_order:
         cur_map = current_data.get(cluster, {})
         prev_map = previous_data.get(cluster, {})
 
@@ -325,6 +322,7 @@ def print_combined_table(
         chunk = colorize_total(chunk, total_cur)
         total_line += f"{cluster_sep}{chunk}"
 
+    total_line += " |"
     print(total_line)
 
 
