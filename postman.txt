@@ -4,7 +4,6 @@
 import os
 import re
 import time
-import threading
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Tuple
 from datetime import datetime
@@ -15,22 +14,16 @@ import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
-# =========================
-# Config
-# =========================
 CREDENTIALS_FILE = "credentials.env"
 
 TIMEOUT_SECONDS = 12
 MAX_WORKERS = 12
 RETRIES = 2
-
 REFRESH_SECONDS = 60
 
-# Umbrales por nodo
 WARNING_THRESHOLD = 50
 CRITICAL_THRESHOLD = 100
 
-# Umbrales para TOTAL
 TOTAL_WARNING_THRESHOLD = 200
 TOTAL_CRITICAL_THRESHOLD = 300
 
@@ -50,9 +43,6 @@ GROUPS = [
 ]
 
 
-# =========================
-# Model
-# =========================
 @dataclass
 class Result:
     timestamp: str
@@ -63,18 +53,8 @@ class Result:
     error: Optional[str] = None
 
 
-# =========================
-# Helpers
-# =========================
-def script_dir() -> str:
-    return os.path.dirname(os.path.abspath(__file__))
-
-
 def load_env_file(path: str) -> Dict[str, str]:
     data: Dict[str, str] = {}
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"No existe el archivo de credenciales: {path}")
-
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -98,10 +78,7 @@ def to_int(val: Optional[str]) -> int:
     m = re.search(r"(\d+(\.\d+)?)", s)
     if not m:
         return 0
-    try:
-        return int(float(m.group(1)))
-    except Exception:
-        return 0
+    return int(float(m.group(1)))
 
 
 def fmt_num_dot(n: int) -> str:
@@ -110,37 +87,32 @@ def fmt_num_dot(n: int) -> str:
 
 def trend_symbol(prev: int, cur: int) -> str:
     if cur > prev:
-        return "+"
+        return "↑"
     if cur < prev:
-        return "-"
-    return "="
+        return "↓"
+    return "→"
 
 
 def clear_screen() -> None:
     os.system("cls" if os.name == "nt" else "clear")
 
 
-def colorize_node(text: str, current_value: int, has_error: bool = False) -> str:
-    if has_error:
-        return text
-    if current_value >= CRITICAL_THRESHOLD:
+def colorize_node(text: str, current: int) -> str:
+    if current >= CRITICAL_THRESHOLD:
         return f"{RED}{text}{RESET}"
-    if current_value >= WARNING_THRESHOLD:
+    if current >= WARNING_THRESHOLD:
         return f"{YELLOW}{text}{RESET}"
     return text
 
 
-def colorize_total(text: str, total_value: int) -> str:
-    if total_value >= TOTAL_CRITICAL_THRESHOLD:
+def colorize_total(text: str, value: int) -> str:
+    if value >= TOTAL_CRITICAL_THRESHOLD:
         return f"{RED}{text}{RESET}"
-    if total_value >= TOTAL_WARNING_THRESHOLD:
+    if value >= TOTAL_WARNING_THRESHOLD:
         return f"{YELLOW}{text}{RESET}"
     return text
 
 
-# =========================
-# XML parsing
-# =========================
 def parse_encolados(xml_text: str) -> Tuple[str, int]:
     root = ET.fromstring(xml_text)
 
@@ -163,9 +135,6 @@ def parse_encolados(xml_text: str) -> Tuple[str, int]:
     return system_status, encolados
 
 
-# =========================
-# Network
-# =========================
 def fetch_one(
     session: requests.Session,
     url: str,
@@ -175,29 +144,28 @@ def fetch_one(
     idx: int,
 ) -> Result:
     nodo = nodo_from_index(idx)
-    headers = {"Accept": "application/xml"}
 
     last_err: Optional[str] = None
     for _ in range(RETRIES + 1):
         try:
             r = session.get(
                 url,
-                headers=headers,
                 auth=auth,
                 timeout=TIMEOUT_SECONDS,
                 verify=VERIFY_SSL,
+                headers={"Accept": "application/xml"},
             )
 
             if r.status_code != 200:
-                return Result(timestamp, nodo, cluster, "Error conexión", 0, f"HTTP {r.status_code}")
+                return Result(timestamp, nodo, cluster, "ERR", 0, f"HTTP {r.status_code}")
 
             status, encolados = parse_encolados(r.text)
-            return Result(timestamp, nodo, cluster, status, encolados, None)
+            return Result(timestamp, nodo, cluster, status, encolados)
 
         except requests.exceptions.RequestException as e:
             last_err = str(e)
 
-    return Result(timestamp, nodo, cluster, "Error conexión", 0, last_err or "RequestException")
+    return Result(timestamp, nodo, cluster, "ERR", 0, last_err or "RequestException")
 
 
 def fetch_cluster(
@@ -211,13 +179,12 @@ def fetch_cluster(
     start = int(group["start"])
     end = int(group["end"])
 
-    targets = [(i, pattern.format(idx=i)) for i in range(start, end + 1)]
-
     results: List[Result] = []
+
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         futures = [
-            ex.submit(fetch_one, session, url, auth, timestamp, cluster, idx)
-            for idx, url in targets
+            ex.submit(fetch_one, session, pattern.format(idx=i), auth, timestamp, cluster, i)
+            for i in range(start, end + 1)
         ]
         for fut in as_completed(futures):
             results.append(fut.result())
@@ -225,9 +192,6 @@ def fetch_cluster(
     return sorted(results, key=lambda r: r.nodo)
 
 
-# =========================
-# Table
-# =========================
 def print_combined_table(
     timestamp: str,
     current_data: Dict[str, Dict[str, Result]],
@@ -236,11 +200,11 @@ def print_combined_table(
     cluster_order = ["Europa", "América", "Brasil", "Aplicaciones"]
     nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
-    ts_width = max(len("Timestamp"), len(timestamp))
-    nodo_width = len("Nodo") + 1
+    ts_width = 8
+    nodo_width = 6
 
-    ant_w = 12
-    act_w = 12
+    ant_w = 9
+    act_w = 9
     var_w = 5
 
     col_sep = " | "
@@ -256,7 +220,7 @@ def print_combined_table(
         )
 
     h1 = (
-        f"| {'Timestamp'.ljust(ts_width)}{col_sep}"
+        f"| {'Hora'.ljust(ts_width)}{col_sep}"
         f"{'Nodo'.ljust(nodo_width)}{cluster_sep}"
         f"{'Europa'.center(cluster_chunk_width)}{cluster_sep}"
         f"{'América'.center(cluster_chunk_width)}{cluster_sep}"
@@ -265,8 +229,8 @@ def print_combined_table(
     )
 
     sub = (
-        f"{'Ant'.center(ant_w)}{col_sep}"
-        f"{'Act'.center(act_w)}{col_sep}"
+        f"{'Anterior'.center(ant_w)}{col_sep}"
+        f"{'Encolados'.center(act_w)}{col_sep}"
         f"{'Var'.center(var_w)}"
     )
 
@@ -276,9 +240,8 @@ def print_combined_table(
         f"{sub}{cluster_sep}{sub}{cluster_sep}{sub}{cluster_sep}{sub} |"
     )
 
-    sep = "-" * max(len(h1), len(h2))
+    sep = "-" * len(h1)
 
-    print("MONITOR GLOBAL ESA | refresco cada 60s | pulsa ESC para salir\n")
     print(h1)
     print(h2)
     print(sep)
@@ -290,14 +253,13 @@ def print_combined_table(
             cur_map = current_data.get(cluster, {})
             prev_map = previous_data.get(cluster, {})
 
-            cur_res = cur_map.get(nodo)
-            cur_val = cur_res.encolados if cur_res else 0
+            cur = cur_map.get(nodo)
+            cur_val = cur.encolados if cur else 0
             prev_val = prev_map.get(nodo, cur_val)
-            var_val = trend_symbol(prev_val, cur_val)
-            has_error = bool(cur_res.error) if cur_res else False
+            var = trend_symbol(prev_val, cur_val)
 
-            chunk = fmt_chunk(prev_val, cur_val, var_val)
-            chunk = colorize_node(chunk, cur_val, has_error=has_error)
+            chunk = fmt_chunk(prev_val, cur_val, var)
+            chunk = colorize_node(chunk, cur_val)
             line += f"{cluster_sep}{chunk}"
 
         line += " |"
@@ -313,12 +275,12 @@ def print_combined_table(
 
         total_cur = sum(r.encolados for r in cur_map.values())
         total_prev = sum(
-            prev_map.get(nodo, cur_map.get(nodo).encolados if cur_map.get(nodo) else 0)
-            for nodo in nodos
+            prev_map.get(n, cur_map.get(n).encolados if cur_map.get(n) else 0)
+            for n in nodos
         )
-        total_var = trend_symbol(total_prev, total_cur)
+        var = trend_symbol(total_prev, total_cur)
 
-        chunk = fmt_chunk(total_prev, total_cur, total_var)
+        chunk = fmt_chunk(total_prev, total_cur, var)
         chunk = colorize_total(chunk, total_cur)
         total_line += f"{cluster_sep}{chunk}"
 
@@ -326,135 +288,69 @@ def print_combined_table(
     print(total_line)
 
 
-def print_alerts(current_data: Dict[str, Dict[str, Result]]) -> None:
-    alerts = []
+def print_top_nodes(current_data: Dict[str, Dict[str, Result]]) -> None:
+    nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
-    for cluster, nodo_map in current_data.items():
-        for nodo, r in nodo_map.items():
-            if r.error:
-                continue
-            if r.encolados >= CRITICAL_THRESHOLD:
-                alerts.append(("CRITICAL", cluster, nodo, r.encolados))
-            elif r.encolados >= WARNING_THRESHOLD:
-                alerts.append(("WARNING", cluster, nodo, r.encolados))
+    totals: Dict[str, int] = {}
+    for nodo in nodos:
+        total = 0
+        for cluster_map in current_data.values():
+            r = cluster_map.get(nodo)
+            if r:
+                total += r.encolados
+        totals[nodo] = total
 
-    if not alerts:
-        return
+    top = sorted(totals.items(), key=lambda x: x[1], reverse=True)[:5]
 
-    critical_count = sum(1 for a in alerts if a[0] == "CRITICAL")
-    warning_count = sum(1 for a in alerts if a[0] == "WARNING")
-
-    print(f"\nALERTAS - CRITICAL: {critical_count} | WARNING: {warning_count}")
-
-    for level, cluster, nodo, value in sorted(alerts, key=lambda x: x[3], reverse=True):
-        if level == "CRITICAL":
-            print(f"{RED}CRITICAL{RESET} - {cluster} {nodo} -> encolados={fmt_num_dot(value)}")
+    print("\nTOP 5 NODOS CON MÁS ENCOLADOS\n")
+    for rank, (nodo, value) in enumerate(top, start=1):
+        text = f"{rank}. {nodo}  →  {fmt_num_dot(value)}"
+        if value >= CRITICAL_THRESHOLD:
+            print(f"{RED}{text}{RESET}")
+        elif value >= WARNING_THRESHOLD:
+            print(f"{YELLOW}{text}{RESET}")
         else:
-            print(f"{YELLOW}WARNING{RESET}  - {cluster} {nodo} -> encolados={fmt_num_dot(value)}")
+            print(text)
 
 
-# =========================
-# ESC listener
-# =========================
-def start_esc_listener(stop_event: threading.Event) -> None:
-    try:
-        import msvcrt  # type: ignore
-
-        def _win_loop():
-            while not stop_event.is_set():
-                if msvcrt.kbhit():
-                    ch = msvcrt.getch()
-                    if ch == b"\x1b":
-                        stop_event.set()
-                        return
-                time.sleep(0.05)
-
-        threading.Thread(target=_win_loop, daemon=True).start()
-        return
-
-    except Exception:
-        pass
-
-    import sys
-    import select
-    import termios
-    import tty
-
-    def _posix_loop():
-        fd = sys.stdin.fileno()
-        old = termios.tcgetattr(fd)
-        try:
-            tty.setcbreak(fd)
-            while not stop_event.is_set():
-                r, _, _ = select.select([sys.stdin], [], [], 0.1)
-                if r:
-                    ch = sys.stdin.read(1)
-                    if ch == "\x1b":
-                        stop_event.set()
-                        return
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old)
-
-    threading.Thread(target=_posix_loop, daemon=True).start()
-
-
-# =========================
-# Main loop
-# =========================
 def run_monitor(auth: Tuple[str, str]) -> None:
-    stop_event = threading.Event()
-    start_esc_listener(stop_event)
-
     previous_data: Dict[str, Dict[str, int]] = {}
 
     with requests.Session() as session:
-        while not stop_event.is_set():
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        while True:
+            timestamp = datetime.now().strftime("%H:%M:%S")
             current_data: Dict[str, Dict[str, Result]] = {}
 
             with ThreadPoolExecutor(max_workers=len(GROUPS)) as ex:
                 fut_map = {
-                    ex.submit(fetch_cluster, session, group, auth, timestamp): group["cluster"]
-                    for group in GROUPS
+                    ex.submit(fetch_cluster, session, g, auth, timestamp): g["cluster"]
+                    for g in GROUPS
                 }
+
                 for fut in as_completed(fut_map):
                     cluster = fut_map[fut]
-                    cluster_results = fut.result()
-                    current_data[cluster] = {r.nodo: r for r in cluster_results}
+                    results = fut.result()
+                    current_data[cluster] = {r.nodo: r for r in results}
 
             clear_screen()
             print_combined_table(timestamp, current_data, previous_data)
-            print_alerts(current_data)
-            print("\n(Refrescando... pulsa ESC para salir)")
+            print_top_nodes(current_data)
 
             previous_data = {
-                cluster: {nodo: r.encolados for nodo, r in nodo_map.items()}
-                for cluster, nodo_map in current_data.items()
+                c: {n: r.encolados for n, r in m.items()}
+                for c, m in current_data.items()
             }
 
-            for _ in range(REFRESH_SECONDS * 10):
-                if stop_event.is_set():
-                    break
-                time.sleep(0.1)
+            time.sleep(REFRESH_SECONDS)
+
+
+def main() -> None:
+    creds = load_env_file(CREDENTIALS_FILE)
+    auth = (creds["GLOBAL_USERNAME"], creds["GLOBAL_PASSWORD"])
 
     clear_screen()
-    print("Salida solicitada. Monitor detenido.")
-
-
-def main() -> int:
-    base = script_dir()
-    creds = load_env_file(os.path.join(base, CREDENTIALS_FILE))
-
-    username = creds.get("GLOBAL_USERNAME")
-    password = creds.get("GLOBAL_PASSWORD")
-    if not username or not password:
-        print("Faltan GLOBAL_USERNAME y/o GLOBAL_PASSWORD en credentials.env")
-        return 2
-
-    clear_screen()
-    run_monitor((username, password))
-    return 0
+    run_monitor(auth)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
