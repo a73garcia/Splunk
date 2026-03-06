@@ -26,8 +26,13 @@ RETRIES = 2
 
 REFRESH_SECONDS = 60
 
+# Umbrales por nodo
 WARNING_THRESHOLD = 50
 CRITICAL_THRESHOLD = 100
+
+# Umbrales para TOTAL
+TOTAL_WARNING_THRESHOLD = 200
+TOTAL_CRITICAL_THRESHOLD = 300
 
 VERIFY_SSL = False
 if not VERIFY_SSL:
@@ -115,12 +120,20 @@ def clear_screen() -> None:
     print("\033[2J\033[H", end="")
 
 
-def colorize(text: str, current_value: int, has_error: bool = False) -> str:
+def colorize_node(text: str, current_value: int, has_error: bool = False) -> str:
     if has_error:
         return text
     if current_value >= CRITICAL_THRESHOLD:
         return f"{RED}{text}{RESET}"
     if current_value >= WARNING_THRESHOLD:
+        return f"{YELLOW}{text}{RESET}"
+    return text
+
+
+def colorize_total(text: str, total_value: int) -> str:
+    if total_value >= TOTAL_CRITICAL_THRESHOLD:
+        return f"{RED}{text}{RESET}"
+    if total_value >= TOTAL_WARNING_THRESHOLD:
         return f"{YELLOW}{text}{RESET}"
     return text
 
@@ -223,13 +236,15 @@ def print_combined_table(
     cluster_order = ["Europa", "América", "Brasil", "Aplicaciones"]
     nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
+    # Anchos base
     ts_width = max(len("Timestamp"), len(timestamp))
     nodo_width = len("Nodo")
 
-    sub_headers = ["Ant", "Act", "Var"]
-    sub_widths = [len(h) for h in sub_headers]
+    ant_w = len("Ant")
+    act_w = len("Act")
+    var_w = len("Var")
 
-    # calcular anchos por cluster para sus 3 subcolumnas
+    # Calcular anchos reales a partir de datos
     for cluster in cluster_order:
         cur_map = current_data.get(cluster, {})
         prev_map = previous_data.get(cluster, {})
@@ -240,46 +255,46 @@ def print_combined_table(
             prev_val = prev_map.get(nodo, cur_val)
             var_val = trend_symbol(prev_val, cur_val)
 
-            sub_widths[0] = max(sub_widths[0], len(fmt_num_dot(prev_val)))
-            sub_widths[1] = max(sub_widths[1], len(fmt_num_dot(cur_val)))
-            sub_widths[2] = max(sub_widths[2], len(var_val))
+            ant_w = max(ant_w, len(fmt_num_dot(prev_val)))
+            act_w = max(act_w, len(fmt_num_dot(cur_val)))
+            var_w = max(var_w, len(var_val))
 
-    ant_w, act_w, var_w = sub_widths
-    cluster_block_width = ant_w + act_w + var_w + 6  # 2 separadores " | "
+    cluster_chunk_width = ant_w + 3 + act_w + 3 + var_w
 
-    # cabecera nivel 1
-    header_1_parts = [
-        "Timestamp".ljust(ts_width),
-        "Nodo".ljust(nodo_width),
-    ]
-    for cluster in cluster_order:
-        header_1_parts.append(cluster.center(cluster_block_width))
-
-    header_1 = " | ".join(header_1_parts)
-
-    # cabecera nivel 2
-    header_2_parts = [
-        "".ljust(ts_width),
-        "".ljust(nodo_width),
-    ]
-    for _ in cluster_order:
-        header_2_parts.append(
-            f"{'Ant'.rjust(ant_w)} | {'Act'.rjust(act_w)} | {'Var'.ljust(var_w)}"
+    def fmt_chunk(prev_val: int, cur_val: int, var_val: str) -> str:
+        return (
+            f"{fmt_num_dot(prev_val).rjust(ant_w)} | "
+            f"{fmt_num_dot(cur_val).rjust(act_w)} | "
+            f"{var_val.ljust(var_w)}"
         )
 
-    header_2 = " | ".join(header_2_parts)
-    sep = "-" * max(len(header_1), len(header_2))
+    # Encabezado 1
+    h1 = (
+        f"{'Timestamp'.ljust(ts_width)} | "
+        f"{'Nodo'.ljust(nodo_width)} | "
+        f"{'Europa'.center(cluster_chunk_width)} | "
+        f"{'América'.center(cluster_chunk_width)} | "
+        f"{'Brasil'.center(cluster_chunk_width)} | "
+        f"{'Aplicaciones'.center(cluster_chunk_width)}"
+    )
 
-    print(f"MONITOR GLOBAL ESA | refresco cada {REFRESH_SECONDS}s | pulsa ESC para salir\n")
-    print(header_1)
-    print(header_2)
+    # Encabezado 2
+    sub = f"{'Ant'.rjust(ant_w)} | {'Act'.rjust(act_w)} | {'Var'.ljust(var_w)}"
+    h2 = (
+        f"{''.ljust(ts_width)} | "
+        f"{''.ljust(nodo_width)} | "
+        f"{sub} | {sub} | {sub} | {sub}"
+    )
+
+    sep = "-" * max(len(h1), len(h2))
+
+    print("MONITOR GLOBAL ESA | refresco cada 60s | pulsa ESC para salir\n")
+    print(h1)
+    print(h2)
     print(sep)
 
     for nodo in nodos:
-        row_parts = [
-            timestamp.ljust(ts_width),
-            nodo.ljust(nodo_width),
-        ]
+        line = f"{timestamp.ljust(ts_width)} | {nodo.ljust(nodo_width)}"
 
         for cluster in cluster_order:
             cur_map = current_data.get(cluster, {})
@@ -291,39 +306,32 @@ def print_combined_table(
             var_val = trend_symbol(prev_val, cur_val)
             has_error = bool(cur_res.error) if cur_res else False
 
-            chunk = (
-                f"{fmt_num_dot(prev_val).rjust(ant_w)} | "
-                f"{fmt_num_dot(cur_val).rjust(act_w)} | "
-                f"{var_val.ljust(var_w)}"
-            )
-            row_parts.append(colorize(chunk, cur_val, has_error=has_error))
+            chunk = fmt_chunk(prev_val, cur_val, var_val)
+            chunk = colorize_node(chunk, cur_val, has_error=has_error)
+            line += f" | {chunk}"
 
-        print(" | ".join(row_parts))
+        print(line)
 
     print(sep)
 
-    # fila total
-    total_parts = [
-        "".ljust(ts_width),
-        "TOTAL".ljust(nodo_width),
-    ]
+    total_line = f"{''.ljust(ts_width)} | {'TOTAL'.ljust(nodo_width)}"
 
     for cluster in cluster_order:
         cur_map = current_data.get(cluster, {})
         prev_map = previous_data.get(cluster, {})
 
         total_cur = sum(r.encolados for r in cur_map.values())
-        total_prev = sum(prev_map.get(nodo, cur_map.get(nodo).encolados if cur_map.get(nodo) else 0) for nodo in nodos)
+        total_prev = sum(
+            prev_map.get(nodo, cur_map.get(nodo).encolados if cur_map.get(nodo) else 0)
+            for nodo in nodos
+        )
         total_var = trend_symbol(total_prev, total_cur)
 
-        chunk = (
-            f"{fmt_num_dot(total_prev).rjust(ant_w)} | "
-            f"{fmt_num_dot(total_cur).rjust(act_w)} | "
-            f"{total_var.ljust(var_w)}"
-        )
-        total_parts.append(colorize(chunk, total_cur, has_error=False))
+        chunk = fmt_chunk(total_prev, total_cur, total_var)
+        chunk = colorize_total(chunk, total_cur)
+        total_line += f" | {chunk}"
 
-    print(" | ".join(total_parts))
+    print(total_line)
 
 
 def print_alerts(current_data: Dict[str, Dict[str, Result]]) -> None:
@@ -410,10 +418,8 @@ def run_monitor(auth: Tuple[str, str]) -> None:
     with requests.Session() as session:
         while not stop_event.is_set():
             timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
             current_data: Dict[str, Dict[str, Result]] = {}
 
-            # consultar clusters en paralelo
             with ThreadPoolExecutor(max_workers=len(GROUPS)) as ex:
                 fut_map = {
                     ex.submit(fetch_cluster, session, group, auth, timestamp): group["cluster"]
@@ -429,7 +435,6 @@ def run_monitor(auth: Tuple[str, str]) -> None:
             print_alerts(current_data)
             print("\n(Refrescando... pulsa ESC para salir)")
 
-            # guardar actuales como previos
             previous_data = {
                 cluster: {nodo: r.encolados for nodo, r in nodo_map.items()}
                 for cluster, nodo_map in current_data.items()
