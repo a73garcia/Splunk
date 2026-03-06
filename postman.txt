@@ -137,17 +137,8 @@ def total_status_colored(cluster: str, total: int) -> str:
     return f"{GREEN}{'OK':^8}{RESET}"
 
 
-def colorize_top(text: str, value: int) -> str:
-    if value >= 100:
-        return f"{RED}{text}{RESET}"
-    if value >= 50:
-        return f"{YELLOW}{text}{RESET}"
-    return text
-
-
-def print_orange_double_separator(width: int = 160) -> None:
+def print_orange_separator(width: int = 160) -> None:
     line = "═" * width
-    print(f"{ORANGE}{line}{RESET}")
     print(f"{ORANGE}{line}{RESET}")
 
 
@@ -385,7 +376,6 @@ def print_cluster_summary_panel(
         cluster = group["cluster"]
 
         current_total = sum(r.encolados for r in current_data.get(cluster, {}).values())
-
         prev_map = previous_data.get(cluster, {})
         previous_total = sum(prev_map.get(nodo, 0) for nodo in nodos)
 
@@ -393,7 +383,6 @@ def print_cluster_summary_panel(
             variation_text = "Sin histórico"
         else:
             delta = current_total - previous_total
-
             if delta > 0:
                 variation_text = f"Sube +{fmt_num_dot(delta)}"
             elif delta < 0:
@@ -411,30 +400,26 @@ def print_cluster_summary_panel(
         )
 
 
+def print_clusters_in_alert(current_data: Dict[str, Dict[str, Result]]) -> None:
+    alerts = []
+
+    for group in GROUPS:
+        cluster = group["cluster"]
+        total = sum(r.encolados for r in current_data.get(cluster, {}).values())
+        th = CLUSTER_THRESHOLDS[cluster]
+
+        if total >= th["total_critical"]:
+            alerts.append(f"{cluster} (CRITICAL)")
+        elif total >= th["total_warning"]:
+            alerts.append(f"{cluster} (WARNING)")
+
+    text = " | ".join(alerts) if alerts else "Ninguno"
+    print(f"CLUSTERS EN ALERTA → {text}")
+
+
 # =========================
-# Side-by-side panels
+# Alerts panel
 # =========================
-def build_top_nodes_lines(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
-    nodos = [f"ESA{i:02d}" for i in range(1, 21)]
-
-    totals: Dict[str, int] = {}
-    for nodo in nodos:
-        total = 0
-        for cluster_map in current_data.values():
-            r = cluster_map.get(nodo)
-            if r:
-                total += r.encolados
-        totals[nodo] = total
-
-    top = sorted(totals.items(), key=lambda x: x[1], reverse=True)[:5]
-
-    lines = ["TOP 5 NODOS", ""]
-    for rank, (nodo, value) in enumerate(top, start=1):
-        text = f"{rank}. {nodo} → {fmt_num_dot(value)}"
-        lines.append(colorize_top(text, value))
-    return lines
-
-
 def build_node_alert_lines(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
     alerts = []
 
@@ -462,16 +447,6 @@ def build_node_alert_lines(current_data: Dict[str, Dict[str, Result]]) -> List[s
             lines.append(f"{YELLOW}{level}{RESET} {cluster} {nodo} → {fmt_num_dot(value)}")
 
     return lines
-
-
-def print_two_column_panels(left_lines: List[str], right_lines: List[str], left_width: int = 38) -> None:
-    total_rows = max(len(left_lines), len(right_lines))
-
-    left = left_lines + [""] * (total_rows - len(left_lines))
-    right = right_lines + [""] * (total_rows - len(right_lines))
-
-    for l, r in zip(left, right):
-        print(f"{l.ljust(left_width)}    {r}")
 
 
 # =========================
@@ -503,16 +478,19 @@ def run_monitor(auth: Tuple[str, str]) -> None:
             print("MONITOR COLAS ESA\n")
             print_cluster_summary_panel(current_data, previous_data)
             print()
-            print_orange_double_separator()
+            print_clusters_in_alert(current_data)
+            print()
+            print_orange_separator()
             print()
             print_combined_table(timestamp, current_data, previous_data)
             print()
-            print_orange_double_separator()
+            print_orange_separator()
             print()
 
-            left_lines = build_top_nodes_lines(current_data)
-            right_lines = build_node_alert_lines(current_data)
-            print_two_column_panels(left_lines, right_lines)
+            alert_lines = build_node_alert_lines(current_data)
+            print("ALERTAS NODOS\n")
+            for line in alert_lines[2:]:
+                print(line)
 
             print("\nPulsa ESC para salir")
 
