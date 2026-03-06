@@ -2,30 +2,31 @@
 # -*- coding: utf-8 -*-
 
 import os
-import re
 import time
 import threading
 import msvcrt
-
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Tuple
 from datetime import datetime
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 import urllib3
-import xml.etree.ElementTree as ET
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 CREDENTIALS_FILE = "credentials.env"
 
 TIMEOUT_SECONDS = 12
 MAX_WORKERS = 12
+RETRIES = 2
 REFRESH_SECONDS = 60
 
+# Umbrales por nodo
 WARNING_THRESHOLD = 50
 CRITICAL_THRESHOLD = 100
 
+# Umbrales para total cluster
 TOTAL_WARNING_THRESHOLD = 200
 TOTAL_CRITICAL_THRESHOLD = 300
 
@@ -38,14 +39,12 @@ YELLOW = "\033[93m"
 GREEN = "\033[92m"
 RESET = "\033[0m"
 
-
 GROUPS = [
-    {"cluster": "Europa", "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
-    {"cluster": "América", "pattern": "https://dh5504-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
-    {"cluster": "Brasil", "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status", "start": 1, "end": 20},
+    {"cluster": "Europa",       "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
+    {"cluster": "América",      "pattern": "https://dh5504-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
+    {"cluster": "Brasil",       "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status",      "start": 1, "end": 20},
     {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
 ]
-
 
 stop_event = threading.Event()
 
@@ -60,192 +59,278 @@ class Result:
     error: Optional[str] = None
 
 
-# =========================
-# ESC LISTENER (WINDOWS)
-# =========================
-
-def esc_listener():
-
-    while not stop_event.is_set():
-
-        if msvcrt.kbhit():
-
-            key = msvcrt.getch()
-
-            if key == b"\x1b":  # ESC
-                stop_event.set()
-                return
-
-        time.sleep(0.1)
-
-
-# =========================
-# HELPERS
-# =========================
-
-def clear_screen():
+def clear_screen() -> None:
     os.system("cls")
 
 
-def load_env_file(path):
-
-    data = {}
-
-    with open(path) as f:
+def load_env_file(path: str) -> Dict[str, str]:
+    data: Dict[str, str] = {}
+    with open(path, "r", encoding="utf-8") as f:
         for line in f:
-            if "=" in line:
-                k, v = line.strip().split("=", 1)
-                data[k] = v
-
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            data[k.strip()] = v.strip()
     return data
 
 
-def nodo_from_index(idx):
+def nodo_from_index(idx: int) -> str:
     return f"ESA{idx:02d}"
 
 
-def fmt_num_dot(n):
+def fmt_num_dot(n: int) -> str:
     return f"{n:,}".replace(",", ".")
 
 
-def trend_symbol(prev, cur):
-
+def trend_symbol(prev: int, cur: int) -> str:
     if cur > prev:
         return "↑"
-
     if cur < prev:
         return "↓"
-
     return "→"
 
 
-# =========================
-# XML PARSER
-# =========================
+def colorize_node(text: str, current: int, has_error: bool = False) -> str:
+    if has_error:
+        return text
+    if current >= CRITICAL_THRESHOLD:
+        return f"{RED}{text}{RESET}"
+    if current >= WARNING_THRESHOLD:
+        return f"{YELLOW}{text}{RESET}"
+    return text
 
-def parse_encolados(xml_text):
 
+def colorize_total(text: str, value: int) -> str:
+    if value >= TOTAL_CRITICAL_THRESHOLD:
+        return f"{RED}{text}{RESET}"
+    if value >= TOTAL_WARNING_THRESHOLD:
+        return f"{YELLOW}{text}{RESET}"
+    return text
+
+
+def esc_listener() -> None:
+    while not stop_event.is_set():
+        if msvcrt.kbhit():
+            key = msvcrt.getch()
+            if key == b"\x1b":
+                stop_event.set()
+                return
+        time.sleep(0.1)
+
+
+def parse_encolados(xml_text: str) -> Tuple[str, int]:
     root = ET.fromstring(xml_text)
 
+    system_status = "No disponible"
+    sys_node = root.find(".//system")
+    if sys_node is not None:
+        system_status = sys_node.attrib.get("status", system_status)
+
+    encolados = 0
     for gauge in root.findall(".//gauge"):
-
         if gauge.attrib.get("name") == "msgs_in_work_queue":
-
             val = gauge.attrib.get("current")
-
             if val is None:
                 cur = gauge.find("./current")
-                if cur is not None:
-                    val = cur.text
+                if cur is not None and cur.text:
+                    val = cur.text.strip()
+            try:
+                encolados = int(float(val))
+            except Exception:
+                encolados = 0
+            break
 
-            return int(float(val))
-
-    return 0
+    return system_status, encolados
 
 
-# =========================
-# NETWORK
-# =========================
-
-def fetch_one(session, url, auth, timestamp, cluster, idx):
-
+def fetch_one(
+    session: requests.Session,
+    url: str,
+    auth: Tuple[str, str],
+    timestamp: str,
+    cluster: str,
+    idx: int,
+) -> Result:
     nodo = nodo_from_index(idx)
 
-    try:
+    last_err: Optional[str] = None
+    for _ in range(RETRIES + 1):
+        try:
+            r = session.get(
+                url,
+                auth=auth,
+                timeout=TIMEOUT_SECONDS,
+                verify=VERIFY_SSL,
+                headers={"Accept": "application/xml"},
+            )
 
-        r = session.get(url, auth=auth, timeout=TIMEOUT_SECONDS, verify=False)
+            if r.status_code != 200:
+                return Result(timestamp, nodo, cluster, "ERR", 0, f"HTTP {r.status_code}")
 
-        if r.status_code != 200:
-            return Result(timestamp, nodo, cluster, "ERR", 0)
+            status, encolados = parse_encolados(r.text)
+            return Result(timestamp, nodo, cluster, status, encolados, None)
 
-        encolados = parse_encolados(r.text)
+        except requests.exceptions.RequestException as e:
+            last_err = str(e)
 
-        return Result(timestamp, nodo, cluster, "OK", encolados)
-
-    except Exception:
-
-        return Result(timestamp, nodo, cluster, "ERR", 0)
+    return Result(timestamp, nodo, cluster, "ERR", 0, last_err or "RequestException")
 
 
-def fetch_cluster(session, group, auth, timestamp):
-
+def fetch_cluster(
+    session: requests.Session,
+    group: Dict,
+    auth: Tuple[str, str],
+    timestamp: str,
+) -> List[Result]:
     cluster = group["cluster"]
     pattern = group["pattern"]
+    start = int(group["start"])
+    end = int(group["end"])
 
-    start = group["start"]
-    end = group["end"]
-
-    results = []
-
+    results: List[Result] = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
-
         futures = [
             ex.submit(fetch_one, session, pattern.format(idx=i), auth, timestamp, cluster, i)
             for i in range(start, end + 1)
         ]
-
         for fut in as_completed(futures):
             results.append(fut.result())
 
     return sorted(results, key=lambda r: r.nodo)
 
 
-# =========================
-# TOP NODES
-# =========================
-
-def print_top_nodes(current_data):
-
+def print_combined_table(
+    timestamp: str,
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+) -> None:
+    cluster_order = ["Europa", "América", "Brasil", "Aplicaciones"]
     nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
-    totals = {}
+    ts_width = 8
+    nodo_width = 6
+
+    ant_w = 9
+    act_w = 9
+    var_w = 5
+
+    col_sep = " | "
+    cluster_sep = " || "
+
+    cluster_chunk_width = ant_w + len(col_sep) + act_w + len(col_sep) + var_w
+
+    def fmt_chunk(prev_val: int, cur_val: int, var_val: str) -> str:
+        return (
+            f"{fmt_num_dot(prev_val).rjust(ant_w)}{col_sep}"
+            f"{fmt_num_dot(cur_val).rjust(act_w)}{col_sep}"
+            f"{var_val.center(var_w)}"
+        )
+
+    h1 = (
+        f"| {'Hora'.ljust(ts_width)}{col_sep}"
+        f"{'Nodo'.ljust(nodo_width)}{cluster_sep}"
+        f"{'Europa'.center(cluster_chunk_width)}{cluster_sep}"
+        f"{'América'.center(cluster_chunk_width)}{cluster_sep}"
+        f"{'Brasil'.center(cluster_chunk_width)}{cluster_sep}"
+        f"{'Aplicaciones'.center(cluster_chunk_width)} |"
+    )
+
+    sub = (
+        f"{'Anterior'.center(ant_w)}{col_sep}"
+        f"{'Encolados'.center(act_w)}{col_sep}"
+        f"{'Var'.center(var_w)}"
+    )
+
+    h2 = (
+        f"| {''.ljust(ts_width)}{col_sep}"
+        f"{''.ljust(nodo_width)}{cluster_sep}"
+        f"{sub}{cluster_sep}{sub}{cluster_sep}{sub}{cluster_sep}{sub} |"
+    )
+
+    sep = "-" * max(len(h1), len(h2))
+
+    print(h1)
+    print(h2)
+    print(sep)
 
     for nodo in nodos:
+        line = f"| {timestamp.ljust(ts_width)}{col_sep}{nodo.ljust(nodo_width)}"
 
+        for cluster in cluster_order:
+            cur_map = current_data.get(cluster, {})
+            prev_map = previous_data.get(cluster, {})
+
+            cur = cur_map.get(nodo)
+            cur_val = cur.encolados if cur else 0
+            prev_val = prev_map.get(nodo, cur_val)
+            var = trend_symbol(prev_val, cur_val)
+            has_error = bool(cur.error) if cur else False
+
+            chunk = fmt_chunk(prev_val, cur_val, var)
+            chunk = colorize_node(chunk, cur_val, has_error=has_error)
+            line += f"{cluster_sep}{chunk}"
+
+        line += " |"
+        print(line)
+
+    print(sep)
+
+    total_line = f"| {''.ljust(ts_width)}{col_sep}{'TOTAL'.ljust(nodo_width)}"
+
+    for cluster in cluster_order:
+        cur_map = current_data.get(cluster, {})
+        prev_map = previous_data.get(cluster, {})
+
+        total_cur = sum(r.encolados for r in cur_map.values())
+        total_prev = sum(
+            prev_map.get(n, cur_map.get(n).encolados if cur_map.get(n) else 0)
+            for n in nodos
+        )
+        var = trend_symbol(total_prev, total_cur)
+
+        chunk = fmt_chunk(total_prev, total_cur, var)
+        chunk = colorize_total(chunk, total_cur)
+        total_line += f"{cluster_sep}{chunk}"
+
+    total_line += " |"
+    print(total_line)
+
+
+def print_top_nodes(current_data: Dict[str, Dict[str, Result]]) -> None:
+    nodos = [f"ESA{i:02d}" for i in range(1, 21)]
+
+    totals: Dict[str, int] = {}
+    for nodo in nodos:
         total = 0
-
         for cluster_map in current_data.values():
-
             r = cluster_map.get(nodo)
-
             if r:
                 total += r.encolados
-
         totals[nodo] = total
 
     top = sorted(totals.items(), key=lambda x: x[1], reverse=True)[:5]
 
     print("\nTOP 5 NODOS\n")
-
     for rank, (nodo, value) in enumerate(top, start=1):
-
         text = f"{rank}. {nodo} → {fmt_num_dot(value)}"
-
         if value >= CRITICAL_THRESHOLD:
             print(f"{RED}{text}{RESET}")
-
         elif value >= WARNING_THRESHOLD:
             print(f"{YELLOW}{text}{RESET}")
-
         else:
             print(text)
 
 
-# =========================
-# ALERTAS NODOS
-# =========================
-
-def print_alerts(current_data):
-
+def print_alerts(current_data: Dict[str, Dict[str, Result]]) -> None:
     alerts = []
 
     for cluster, nodo_map in current_data.items():
-
         for nodo, r in nodo_map.items():
-
+            if r.error:
+                continue
             if r.encolados >= CRITICAL_THRESHOLD:
                 alerts.append(("CRITICAL", cluster, nodo, r.encolados))
-
             elif r.encolados >= WARNING_THRESHOLD:
                 alerts.append(("WARNING", cluster, nodo, r.encolados))
 
@@ -256,108 +341,78 @@ def print_alerts(current_data):
         return
 
     for level, cluster, nodo, value in sorted(alerts, key=lambda x: x[3], reverse=True):
-
         if level == "CRITICAL":
             print(f"{RED}CRITICAL{RESET} {cluster} {nodo} → {fmt_num_dot(value)}")
-
         else:
             print(f"{YELLOW}WARNING{RESET} {cluster} {nodo} → {fmt_num_dot(value)}")
 
 
-# =========================
-# ALERTAS TOTAL CLUSTER
-# =========================
-
-def print_total_alerts(current_data):
-
+def print_total_alerts(current_data: Dict[str, Dict[str, Result]]) -> None:
     print("\nALERTAS TOTALES CLUSTER\n")
 
     for group in GROUPS:
-
         cluster = group["cluster"]
-
         total = sum(r.encolados for r in current_data.get(cluster, {}).values())
 
         if total >= TOTAL_CRITICAL_THRESHOLD:
             status = f"{RED}CRITICAL{RESET}"
-
         elif total >= TOTAL_WARNING_THRESHOLD:
             status = f"{YELLOW}WARNING{RESET}"
-
         else:
             status = f"{GREEN}OK{RESET}"
 
         print(f"{cluster:<13} → {status} | Total={fmt_num_dot(total)}")
 
 
-# =========================
-# MONITOR LOOP
-# =========================
-
-def run_monitor(auth):
-
-    previous_data = {}
+def run_monitor(auth: Tuple[str, str]) -> None:
+    previous_data: Dict[str, Dict[str, int]] = {}
 
     listener = threading.Thread(target=esc_listener, daemon=True)
     listener.start()
 
     with requests.Session() as session:
-
         while not stop_event.is_set():
-
             timestamp = datetime.now().strftime("%H:%M:%S")
-
-            current_data = {}
+            current_data: Dict[str, Dict[str, Result]] = {}
 
             with ThreadPoolExecutor(max_workers=len(GROUPS)) as ex:
-
                 fut_map = {
                     ex.submit(fetch_cluster, session, g, auth, timestamp): g["cluster"]
                     for g in GROUPS
                 }
 
                 for fut in as_completed(fut_map):
-
                     cluster = fut_map[fut]
-
                     results = fut.result()
-
                     current_data[cluster] = {r.nodo: r for r in results}
 
             clear_screen()
-
             print("MONITOR COLAS ESA\n")
-            print(f"Hora: {timestamp}\n")
-
+            print_combined_table(timestamp, current_data, previous_data)
             print_top_nodes(current_data)
-
             print_alerts(current_data)
-
             print_total_alerts(current_data)
+            print("\nPulsa ESC para salir")
+
+            previous_data = {
+                c: {n: r.encolados for n, r in m.items()}
+                for c, m in current_data.items()
+            }
 
             for _ in range(REFRESH_SECONDS * 10):
-
                 if stop_event.is_set():
                     break
-
                 time.sleep(0.1)
 
     clear_screen()
     print("Monitor detenido (ESC pulsado)")
 
 
-# =========================
-# MAIN
-# =========================
-
-def main():
-
+def main() -> None:
     creds = load_env_file(CREDENTIALS_FILE)
-
     auth = (creds["GLOBAL_USERNAME"], creds["GLOBAL_PASSWORD"])
 
     clear_screen()
-
     run_monitor(auth)
 
 
