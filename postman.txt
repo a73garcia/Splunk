@@ -22,14 +22,6 @@ MAX_WORKERS = 12
 RETRIES = 2
 REFRESH_SECONDS = 60
 
-# Umbrales por nodo
-WARNING_THRESHOLD = 50
-CRITICAL_THRESHOLD = 100
-
-# Umbrales para total cluster
-TOTAL_WARNING_THRESHOLD = 200
-TOTAL_CRITICAL_THRESHOLD = 300
-
 VERIFY_SSL = False
 if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -46,6 +38,34 @@ GROUPS = [
     {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
 ]
 
+# Umbrales específicos por cluster
+CLUSTER_THRESHOLDS = {
+    "Europa": {
+        "warning": 50,
+        "critical": 100,
+        "total_warning": 200,
+        "total_critical": 300,
+    },
+    "América": {
+        "warning": 50,
+        "critical": 100,
+        "total_warning": 200,
+        "total_critical": 300,
+    },
+    "Brasil": {
+        "warning": 50,
+        "critical": 100,
+        "total_warning": 200,
+        "total_critical": 300,
+    },
+    "Aplicaciones": {
+        "warning": 20,
+        "critical": 40,
+        "total_warning": 80,
+        "total_critical": 120,
+    },
+}
+
 stop_event = threading.Event()
 
 
@@ -59,6 +79,9 @@ class Result:
     error: Optional[str] = None
 
 
+# =========================
+# Helpers
+# =========================
 def clear_screen() -> None:
     os.system("cls")
 
@@ -91,24 +114,44 @@ def trend_symbol(prev: int, cur: int) -> str:
     return "→"
 
 
-def colorize_node(text: str, current: int, has_error: bool = False) -> str:
+def colorize_node(text: str, cluster: str, current: int, has_error: bool = False) -> str:
     if has_error:
         return text
-    if current >= CRITICAL_THRESHOLD:
+
+    th = CLUSTER_THRESHOLDS[cluster]
+
+    if current >= th["critical"]:
         return f"{RED}{text}{RESET}"
-    if current >= WARNING_THRESHOLD:
+
+    if current >= th["warning"]:
+        return f"{YELLOW}{text}{RESET}"
+
+    return text
+
+
+def total_status_colored(cluster: str, total: int) -> str:
+    th = CLUSTER_THRESHOLDS[cluster]
+
+    if total >= th["total_critical"]:
+        return f"{RED}{'CRITICAL':<8}{RESET}"
+    if total >= th["total_warning"]:
+        return f"{YELLOW}{'WARNING ':<8}{RESET}"
+    return f"{GREEN}{'OK':^8}{RESET}"
+
+
+def colorize_total(text: str, cluster: str, value: int) -> str:
+    th = CLUSTER_THRESHOLDS[cluster]
+
+    if value >= th["total_critical"]:
+        return f"{RED}{text}{RESET}"
+    if value >= th["total_warning"]:
         return f"{YELLOW}{text}{RESET}"
     return text
 
 
-def colorize_total(text: str, value: int) -> str:
-    if value >= TOTAL_CRITICAL_THRESHOLD:
-        return f"{RED}{text}{RESET}"
-    if value >= TOTAL_WARNING_THRESHOLD:
-        return f"{YELLOW}{text}{RESET}"
-    return text
-
-
+# =========================
+# ESC listener (Windows)
+# =========================
 def esc_listener() -> None:
     while not stop_event.is_set():
         if msvcrt.kbhit():
@@ -119,6 +162,9 @@ def esc_listener() -> None:
         time.sleep(0.1)
 
 
+# =========================
+# XML parser
+# =========================
 def parse_encolados(xml_text: str) -> Tuple[str, int]:
     root = ET.fromstring(xml_text)
 
@@ -144,6 +190,9 @@ def parse_encolados(xml_text: str) -> Tuple[str, int]:
     return system_status, encolados
 
 
+# =========================
+# Network
+# =========================
 def fetch_one(
     session: requests.Session,
     url: str,
@@ -200,6 +249,9 @@ def fetch_cluster(
     return sorted(results, key=lambda r: r.nodo)
 
 
+# =========================
+# Main combined table
+# =========================
 def print_combined_table(
     timestamp: str,
     current_data: Dict[str, Dict[str, Result]],
@@ -268,7 +320,7 @@ def print_combined_table(
             has_error = bool(cur.error) if cur else False
 
             chunk = fmt_chunk(prev_val, cur_val, var)
-            chunk = colorize_node(chunk, cur_val, has_error=has_error)
+            chunk = colorize_node(chunk, cluster, cur_val, has_error=has_error)
             line += f"{cluster_sep}{chunk}"
 
         line += " |"
@@ -290,13 +342,41 @@ def print_combined_table(
         var = trend_symbol(total_prev, total_cur)
 
         chunk = fmt_chunk(total_prev, total_cur, var)
-        chunk = colorize_total(chunk, total_cur)
+        chunk = colorize_total(chunk, cluster, total_cur)
         total_line += f"{cluster_sep}{chunk}"
 
     total_line += " |"
     print(total_line)
 
 
+# =========================
+# Summary panel
+# =========================
+def print_cluster_summary_panel(current_data: Dict[str, Dict[str, Result]]) -> None:
+    print("RESUMEN CLUSTERS\n")
+
+    headers = ["Cluster", "Total", "Estado"]
+    c1 = 13
+    c2 = 10
+    c3 = 8
+
+    header = f"{headers[0].ljust(c1)} | {headers[1].rjust(c2)} | {headers[2].center(c3)}"
+    sep = "-" * len(header)
+
+    print(header)
+    print(sep)
+
+    for group in GROUPS:
+        cluster = group["cluster"]
+        total = sum(r.encolados for r in current_data.get(cluster, {}).values())
+        status_colored = total_status_colored(cluster, total)
+
+        print(f"{cluster.ljust(c1)} | {fmt_num_dot(total).rjust(c2)} | {status_colored}")
+
+
+# =========================
+# Top / alerts
+# =========================
 def print_top_nodes(current_data: Dict[str, Dict[str, Result]]) -> None:
     nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
@@ -326,13 +406,15 @@ def print_alerts(current_data: Dict[str, Dict[str, Result]]) -> None:
     alerts = []
 
     for cluster, nodo_map in current_data.items():
+        th = CLUSTER_THRESHOLDS[cluster]
+
         for nodo, r in nodo_map.items():
             if r.error:
                 continue
-            if r.encolados >= CRITICAL_THRESHOLD:
+            if r.encolados >= th["critical"]:
                 alerts.append(("CRITICAL", cluster, nodo, r.encolados))
-            elif r.encolados >= WARNING_THRESHOLD:
-                alerts.append(("WARNING", cluster, nodo, r.encolados))
+            elif r.encolados >= th["warning"]:
+                alerts.append(("WARNING ", cluster, nodo, r.encolados))
 
     print("\nALERTAS NODOS\n")
 
@@ -341,10 +423,10 @@ def print_alerts(current_data: Dict[str, Dict[str, Result]]) -> None:
         return
 
     for level, cluster, nodo, value in sorted(alerts, key=lambda x: x[3], reverse=True):
-        if level == "CRITICAL":
-            print(f"{RED}CRITICAL{RESET} {cluster} {nodo} → {fmt_num_dot(value)}")
+        if level.strip() == "CRITICAL":
+            print(f"{RED}{level}{RESET} {cluster} {nodo} → {fmt_num_dot(value)}")
         else:
-            print(f"{YELLOW}WARNING{RESET} {cluster} {nodo} → {fmt_num_dot(value)}")
+            print(f"{YELLOW}{level}{RESET} {cluster} {nodo} → {fmt_num_dot(value)}")
 
 
 def print_total_alerts(current_data: Dict[str, Dict[str, Result]]) -> None:
@@ -353,17 +435,13 @@ def print_total_alerts(current_data: Dict[str, Dict[str, Result]]) -> None:
     for group in GROUPS:
         cluster = group["cluster"]
         total = sum(r.encolados for r in current_data.get(cluster, {}).values())
-
-        if total >= TOTAL_CRITICAL_THRESHOLD:
-            status = f"{RED}CRITICAL{RESET}"
-        elif total >= TOTAL_WARNING_THRESHOLD:
-            status = f"{YELLOW}WARNING{RESET}"
-        else:
-            status = f"{GREEN}OK{RESET}"
-
+        status = total_status_colored(cluster, total)
         print(f"{cluster:<13} → {status} | Total={fmt_num_dot(total)}")
 
 
+# =========================
+# Main loop
+# =========================
 def run_monitor(auth: Tuple[str, str]) -> None:
     previous_data: Dict[str, Dict[str, int]] = {}
 
@@ -388,6 +466,8 @@ def run_monitor(auth: Tuple[str, str]) -> None:
 
             clear_screen()
             print("MONITOR COLAS ESA\n")
+            print_cluster_summary_panel(current_data)
+            print()
             print_combined_table(timestamp, current_data, previous_data)
             print_top_nodes(current_data)
             print_alerts(current_data)
