@@ -1,24 +1,59 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import os
-import re
-import time
+import platform
 import threading
-import sys
-import select
-import termios
-import tty
+import time
 
-from dataclasses import dataclass
-from typing import Optional, List, Dict, Tuple
-from datetime import datetime
+stop_event = threading.Event()
 
-import requests
-import urllib3
-import xml.etree.ElementTree as ET
-from concurrent.futures import ThreadPoolExecutor, as_completed
+def esc_listener():
 
+    system = platform.system()
+
+    # WINDOWS
+    if system == "Windows":
+        import msvcrt
+
+        while not stop_event.is_set():
+
+            if msvcrt.kbhit():
+                key = msvcrt.getch()
+
+                if key == b'\x1b':   # ESC
+                    stop_event.set()
+                    return
+
+            time.sleep(0.1)
+
+    # LINUX / MAC
+    else:
+
+        import sys
+        import select
+        import termios
+        import tty
+
+        fd = sys.stdin.fileno()
+        old_settings = termios.tcgetattr(fd)
+
+        try:
+
+            tty.setcbreak(fd)
+
+            while not stop_event.is_set():
+
+                r, _, _ = select.select([sys.stdin], [], [], 0.1)
+
+                if r:
+                    key = sys.stdin.read(1)
+
+                    if key == '\x1b':
+                        stop_event.set()
+                        return
+
+        finally:
+            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 CREDENTIALS_FILE = "credentials.env"
 
