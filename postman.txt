@@ -117,7 +117,7 @@ def trend_symbol(prev: int, cur: int) -> str:
 
 
 def clear_screen() -> None:
-    print("\033[2J\033[H", end="")
+    os.system("cls" if os.name == "nt" else "clear")
 
 
 def colorize_node(text: str, current_value: int, has_error: bool = False) -> str:
@@ -237,7 +237,7 @@ def print_combined_table(
     nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
     ts_width = max(len("Timestamp"), len(timestamp))
-    nodo_width = len("Nodo") + 1  # un espacio más
+    nodo_width = len("Nodo") + 1
 
     ant_w = 12
     act_w = 12
