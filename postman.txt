@@ -1,65 +1,26 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-import platform
-import threading
+import os
+import re
 import time
+import threading
+import msvcrt
 
-stop_event = threading.Event()
+from dataclasses import dataclass
+from typing import Optional, List, Dict, Tuple
+from datetime import datetime
 
-def esc_listener():
+import requests
+import urllib3
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    system = platform.system()
-
-    # WINDOWS
-    if system == "Windows":
-        import msvcrt
-
-        while not stop_event.is_set():
-
-            if msvcrt.kbhit():
-                key = msvcrt.getch()
-
-                if key == b'\x1b':   # ESC
-                    stop_event.set()
-                    return
-
-            time.sleep(0.1)
-
-    # LINUX / MAC
-    else:
-
-        import sys
-        import select
-        import termios
-        import tty
-
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-
-        try:
-
-            tty.setcbreak(fd)
-
-            while not stop_event.is_set():
-
-                r, _, _ = select.select([sys.stdin], [], [], 0.1)
-
-                if r:
-                    key = sys.stdin.read(1)
-
-                    if key == '\x1b':
-                        stop_event.set()
-                        return
-
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 CREDENTIALS_FILE = "credentials.env"
 
 TIMEOUT_SECONDS = 12
 MAX_WORKERS = 12
-RETRIES = 2
 REFRESH_SECONDS = 60
 
 WARNING_THRESHOLD = 50
@@ -76,6 +37,7 @@ RED = "\033[91m"
 YELLOW = "\033[93m"
 GREEN = "\033[92m"
 RESET = "\033[0m"
+
 
 GROUPS = [
     {"cluster": "Europa", "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
@@ -99,35 +61,31 @@ class Result:
 
 
 # =========================
-# KEYBOARD ESC LISTENER
+# ESC LISTENER (WINDOWS)
 # =========================
 
 def esc_listener():
 
-    fd = sys.stdin.fileno()
-    old_settings = termios.tcgetattr(fd)
+    while not stop_event.is_set():
 
-    try:
+        if msvcrt.kbhit():
 
-        tty.setcbreak(fd)
+            key = msvcrt.getch()
 
-        while not stop_event.is_set():
+            if key == b"\x1b":  # ESC
+                stop_event.set()
+                return
 
-            r, _, _ = select.select([sys.stdin], [], [], 0.1)
-
-            if r:
-                ch = sys.stdin.read(1)
-                if ch == "\x1b":  # ESC
-                    stop_event.set()
-                    return
-
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        time.sleep(0.1)
 
 
 # =========================
 # HELPERS
 # =========================
+
+def clear_screen():
+    os.system("cls")
+
 
 def load_env_file(path):
 
@@ -154,13 +112,11 @@ def trend_symbol(prev, cur):
 
     if cur > prev:
         return "↑"
+
     if cur < prev:
         return "↓"
+
     return "→"
-
-
-def clear_screen():
-    os.system("cls" if os.name == "nt" else "clear")
 
 
 # =========================
@@ -259,7 +215,7 @@ def print_top_nodes(current_data):
 
     top = sorted(totals.items(), key=lambda x: x[1], reverse=True)[:5]
 
-    print("\nTOP 5 NODOS CON MÁS ENCOLADOS\n")
+    print("\nTOP 5 NODOS\n")
 
     for rank, (nodo, value) in enumerate(top, start=1):
 
@@ -267,14 +223,16 @@ def print_top_nodes(current_data):
 
         if value >= CRITICAL_THRESHOLD:
             print(f"{RED}{text}{RESET}")
+
         elif value >= WARNING_THRESHOLD:
             print(f"{YELLOW}{text}{RESET}")
+
         else:
             print(text)
 
 
 # =========================
-# ALERTS
+# ALERTAS NODOS
 # =========================
 
 def print_alerts(current_data):
@@ -291,7 +249,7 @@ def print_alerts(current_data):
             elif r.encolados >= WARNING_THRESHOLD:
                 alerts.append(("WARNING", cluster, nodo, r.encolados))
 
-    print("\nALERTAS NODOS")
+    print("\nALERTAS NODOS\n")
 
     if not alerts:
         print(f"{GREEN}OK - Sin alertas{RESET}")
@@ -307,7 +265,7 @@ def print_alerts(current_data):
 
 
 # =========================
-# TOTAL ALERTS
+# ALERTAS TOTAL CLUSTER
 # =========================
 
 def print_total_alerts(current_data):
@@ -333,7 +291,7 @@ def print_total_alerts(current_data):
 
 
 # =========================
-# MAIN MONITOR LOOP
+# MONITOR LOOP
 # =========================
 
 def run_monitor(auth):
