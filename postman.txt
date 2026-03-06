@@ -21,9 +21,11 @@ MAX_WORKERS = 12
 RETRIES = 2
 REFRESH_SECONDS = 60
 
+# Umbrales por nodo
 WARNING_THRESHOLD = 50
 CRITICAL_THRESHOLD = 100
 
+# Umbrales para TOTAL
 TOTAL_WARNING_THRESHOLD = 200
 TOTAL_CRITICAL_THRESHOLD = 300
 
@@ -33,6 +35,7 @@ if not VERIFY_SSL:
 
 RED = "\033[91m"
 YELLOW = "\033[93m"
+GREEN = "\033[92m"
 RESET = "\033[0m"
 
 GROUPS = [
@@ -313,6 +316,55 @@ def print_top_nodes(current_data: Dict[str, Dict[str, Result]]) -> None:
             print(text)
 
 
+def print_alerts(current_data: Dict[str, Dict[str, Result]]) -> None:
+    alerts = []
+
+    for cluster, nodo_map in current_data.items():
+        for nodo, r in nodo_map.items():
+            if r.error:
+                continue
+            if r.encolados >= CRITICAL_THRESHOLD:
+                alerts.append(("CRITICAL", cluster, nodo, r.encolados))
+            elif r.encolados >= WARNING_THRESHOLD:
+                alerts.append(("WARNING", cluster, nodo, r.encolados))
+
+    print("\nALERTAS NODOS")
+
+    if not alerts:
+        print(f"{GREEN}OK - Sin alertas por nodo{RESET}")
+        return
+
+    critical_count = sum(1 for a in alerts if a[0] == "CRITICAL")
+    warning_count = sum(1 for a in alerts if a[0] == "WARNING")
+
+    print(f"CRITICAL: {critical_count} | WARNING: {warning_count}")
+
+    for level, cluster, nodo, value in sorted(alerts, key=lambda x: x[3], reverse=True):
+        if level == "CRITICAL":
+            print(f"{RED}CRITICAL{RESET} - {cluster} {nodo} -> encolados={fmt_num_dot(value)}")
+        else:
+            print(f"{YELLOW}WARNING{RESET}  - {cluster} {nodo} -> encolados={fmt_num_dot(value)}")
+
+
+def print_total_alerts(current_data: Dict[str, Dict[str, Result]]) -> None:
+    cluster_order = ["Europa", "América", "Brasil", "Aplicaciones"]
+
+    print("\nALERTAS TOTALES CLUSTER\n")
+
+    for cluster in cluster_order:
+        cur_map = current_data.get(cluster, {})
+        total = sum(r.encolados for r in cur_map.values())
+
+        if total >= TOTAL_CRITICAL_THRESHOLD:
+            status = f"{RED}CRITICAL{RESET}"
+        elif total >= TOTAL_WARNING_THRESHOLD:
+            status = f"{YELLOW}WARNING{RESET}"
+        else:
+            status = f"{GREEN}OK{RESET}"
+
+        print(f"{cluster:<13} -> {status} | Total={fmt_num_dot(total)}")
+
+
 def run_monitor(auth: Tuple[str, str]) -> None:
     previous_data: Dict[str, Dict[str, int]] = {}
 
@@ -335,6 +387,8 @@ def run_monitor(auth: Tuple[str, str]) -> None:
             clear_screen()
             print_combined_table(timestamp, current_data, previous_data)
             print_top_nodes(current_data)
+            print_alerts(current_data)
+            print_total_alerts(current_data)
 
             previous_data = {
                 c: {n: r.encolados for n, r in m.items()}
