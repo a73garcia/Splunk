@@ -1,0 +1,365 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
+import os
+import re
+import time
+import threading
+import msvcrt
+
+from dataclasses import dataclass
+from typing import Optional, List, Dict, Tuple
+from datetime import datetime
+
+import requests
+import urllib3
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+
+CREDENTIALS_FILE = "credentials.env"
+
+TIMEOUT_SECONDS = 12
+MAX_WORKERS = 12
+REFRESH_SECONDS = 60
+
+WARNING_THRESHOLD = 50
+CRITICAL_THRESHOLD = 100
+
+TOTAL_WARNING_THRESHOLD = 200
+TOTAL_CRITICAL_THRESHOLD = 300
+
+VERIFY_SSL = False
+if not VERIFY_SSL:
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+RED = "\033[91m"
+YELLOW = "\033[93m"
+GREEN = "\033[92m"
+RESET = "\033[0m"
+
+
+GROUPS = [
+    {"cluster": "Europa", "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
+    {"cluster": "América", "pattern": "https://dh5504-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
+    {"cluster": "Brasil", "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status", "start": 1, "end": 20},
+    {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
+]
+
+
+stop_event = threading.Event()
+
+
+@dataclass
+class Result:
+    timestamp: str
+    nodo: str
+    cluster: str
+    status: str
+    encolados: int
+    error: Optional[str] = None
+
+
+# =========================
+# ESC LISTENER (WINDOWS)
+# =========================
+
+def esc_listener():
+
+    while not stop_event.is_set():
+
+        if msvcrt.kbhit():
+
+            key = msvcrt.getch()
+
+            if key == b"\x1b":  # ESC
+                stop_event.set()
+                return
+
+        time.sleep(0.1)
+
+
+# =========================
+# HELPERS
+# =========================
+
+def clear_screen():
+    os.system("cls")
+
+
+def load_env_file(path):
+
+    data = {}
+
+    with open(path) as f:
+        for line in f:
+            if "=" in line:
+                k, v = line.strip().split("=", 1)
+                data[k] = v
+
+    return data
+
+
+def nodo_from_index(idx):
+    return f"ESA{idx:02d}"
+
+
+def fmt_num_dot(n):
+    return f"{n:,}".replace(",", ".")
+
+
+def trend_symbol(prev, cur):
+
+    if cur > prev:
+        return "↑"
+
+    if cur < prev:
+        return "↓"
+
+    return "→"
+
+
+# =========================
+# XML PARSER
+# =========================
+
+def parse_encolados(xml_text):
+
+    root = ET.fromstring(xml_text)
+
+    for gauge in root.findall(".//gauge"):
+
+        if gauge.attrib.get("name") == "msgs_in_work_queue":
+
+            val = gauge.attrib.get("current")
+
+            if val is None:
+                cur = gauge.find("./current")
+                if cur is not None:
+                    val = cur.text
+
+            return int(float(val))
+
+    return 0
+
+
+# =========================
+# NETWORK
+# =========================
+
+def fetch_one(session, url, auth, timestamp, cluster, idx):
+
+    nodo = nodo_from_index(idx)
+
+    try:
+
+        r = session.get(url, auth=auth, timeout=TIMEOUT_SECONDS, verify=False)
+
+        if r.status_code != 200:
+            return Result(timestamp, nodo, cluster, "ERR", 0)
+
+        encolados = parse_encolados(r.text)
+
+        return Result(timestamp, nodo, cluster, "OK", encolados)
+
+    except Exception:
+
+        return Result(timestamp, nodo, cluster, "ERR", 0)
+
+
+def fetch_cluster(session, group, auth, timestamp):
+
+    cluster = group["cluster"]
+    pattern = group["pattern"]
+
+    start = group["start"]
+    end = group["end"]
+
+    results = []
+
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+
+        futures = [
+            ex.submit(fetch_one, session, pattern.format(idx=i), auth, timestamp, cluster, i)
+            for i in range(start, end + 1)
+        ]
+
+        for fut in as_completed(futures):
+            results.append(fut.result())
+
+    return sorted(results, key=lambda r: r.nodo)
+
+
+# =========================
+# TOP NODES
+# =========================
+
+def print_top_nodes(current_data):
+
+    nodos = [f"ESA{i:02d}" for i in range(1, 21)]
+
+    totals = {}
+
+    for nodo in nodos:
+
+        total = 0
+
+        for cluster_map in current_data.values():
+
+            r = cluster_map.get(nodo)
+
+            if r:
+                total += r.encolados
+
+        totals[nodo] = total
+
+    top = sorted(totals.items(), key=lambda x: x[1], reverse=True)[:5]
+
+    print("\nTOP 5 NODOS\n")
+
+    for rank, (nodo, value) in enumerate(top, start=1):
+
+        text = f"{rank}. {nodo} → {fmt_num_dot(value)}"
+
+        if value >= CRITICAL_THRESHOLD:
+            print(f"{RED}{text}{RESET}")
+
+        elif value >= WARNING_THRESHOLD:
+            print(f"{YELLOW}{text}{RESET}")
+
+        else:
+            print(text)
+
+
+# =========================
+# ALERTAS NODOS
+# =========================
+
+def print_alerts(current_data):
+
+    alerts = []
+
+    for cluster, nodo_map in current_data.items():
+
+        for nodo, r in nodo_map.items():
+
+            if r.encolados >= CRITICAL_THRESHOLD:
+                alerts.append(("CRITICAL", cluster, nodo, r.encolados))
+
+            elif r.encolados >= WARNING_THRESHOLD:
+                alerts.append(("WARNING", cluster, nodo, r.encolados))
+
+    print("\nALERTAS NODOS\n")
+
+    if not alerts:
+        print(f"{GREEN}OK - Sin alertas{RESET}")
+        return
+
+    for level, cluster, nodo, value in sorted(alerts, key=lambda x: x[3], reverse=True):
+
+        if level == "CRITICAL":
+            print(f"{RED}CRITICAL{RESET} {cluster} {nodo} → {fmt_num_dot(value)}")
+
+        else:
+            print(f"{YELLOW}WARNING{RESET} {cluster} {nodo} → {fmt_num_dot(value)}")
+
+
+# =========================
+# ALERTAS TOTAL CLUSTER
+# =========================
+
+def print_total_alerts(current_data):
+
+    print("\nALERTAS TOTALES CLUSTER\n")
+
+    for group in GROUPS:
+
+        cluster = group["cluster"]
+
+        total = sum(r.encolados for r in current_data.get(cluster, {}).values())
+
+        if total >= TOTAL_CRITICAL_THRESHOLD:
+            status = f"{RED}CRITICAL{RESET}"
+
+        elif total >= TOTAL_WARNING_THRESHOLD:
+            status = f"{YELLOW}WARNING{RESET}"
+
+        else:
+            status = f"{GREEN}OK{RESET}"
+
+        print(f"{cluster:<13} → {status} | Total={fmt_num_dot(total)}")
+
+
+# =========================
+# MONITOR LOOP
+# =========================
+
+def run_monitor(auth):
+
+    previous_data = {}
+
+    listener = threading.Thread(target=esc_listener, daemon=True)
+    listener.start()
+
+    with requests.Session() as session:
+
+        while not stop_event.is_set():
+
+            timestamp = datetime.now().strftime("%H:%M:%S")
+
+            current_data = {}
+
+            with ThreadPoolExecutor(max_workers=len(GROUPS)) as ex:
+
+                fut_map = {
+                    ex.submit(fetch_cluster, session, g, auth, timestamp): g["cluster"]
+                    for g in GROUPS
+                }
+
+                for fut in as_completed(fut_map):
+
+                    cluster = fut_map[fut]
+
+                    results = fut.result()
+
+                    current_data[cluster] = {r.nodo: r for r in results}
+
+            clear_screen()
+
+            print("MONITOR COLAS ESA\n")
+            print(f"Hora: {timestamp}\n")
+
+            print_top_nodes(current_data)
+
+            print_alerts(current_data)
+
+            print_total_alerts(current_data)
+
+            for _ in range(REFRESH_SECONDS * 10):
+
+                if stop_event.is_set():
+                    break
+
+                time.sleep(0.1)
+
+    clear_screen()
+    print("Monitor detenido (ESC pulsado)")
+
+
+# =========================
+# MAIN
+# =========================
+
+def main():
+
+    creds = load_env_file(CREDENTIALS_FILE)
+
+    auth = (creds["GLOBAL_USERNAME"], creds["GLOBAL_PASSWORD"])
+
+    clear_screen()
+
+    run_monitor(auth)
+
+
+if __name__ == "__main__":
+    main()
