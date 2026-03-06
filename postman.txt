@@ -38,7 +38,6 @@ GROUPS = [
     {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
 ]
 
-# Umbrales específicos por cluster
 CLUSTER_THRESHOLDS = {
     "Europa": {
         "warning": 50,
@@ -137,12 +136,10 @@ def total_status_colored(cluster: str, total: int) -> str:
     return f"{GREEN}{'OK':^8}{RESET}"
 
 
-def colorize_total(text: str, cluster: str, value: int) -> str:
-    th = CLUSTER_THRESHOLDS[cluster]
-
-    if value >= th["total_critical"]:
+def colorize_top(text: str, value: int) -> str:
+    if value >= 100:
         return f"{RED}{text}{RESET}"
-    if value >= th["total_warning"]:
+    if value >= 50:
         return f"{YELLOW}{text}{RESET}"
     return text
 
@@ -340,7 +337,9 @@ def print_combined_table(
         var = trend_symbol(total_prev, total_cur)
 
         chunk = fmt_chunk(total_prev, total_cur, var)
-        chunk = colorize_total(chunk, cluster, total_cur)
+        chunk = colorize_node(chunk, cluster, total_cur, has_error=False)
+        line_color = total_status_colored(cluster, total_cur)
+        _ = line_color  # solo para mantener la lógica de umbral específica
         total_line += f"{cluster_sep}{chunk}"
 
     total_line += " |"
@@ -373,9 +372,9 @@ def print_cluster_summary_panel(current_data: Dict[str, Dict[str, Result]]) -> N
 
 
 # =========================
-# Top / alerts
+# Side-by-side panels
 # =========================
-def print_top_nodes(current_data: Dict[str, Dict[str, Result]]) -> None:
+def build_top_nodes_lines(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
     nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
     totals: Dict[str, int] = {}
@@ -389,18 +388,14 @@ def print_top_nodes(current_data: Dict[str, Dict[str, Result]]) -> None:
 
     top = sorted(totals.items(), key=lambda x: x[1], reverse=True)[:5]
 
-    print("\nTOP 5 NODOS\n")
+    lines = ["TOP 5 NODOS", ""]
     for rank, (nodo, value) in enumerate(top, start=1):
         text = f"{rank}. {nodo} → {fmt_num_dot(value)}"
-        if value >= 100:
-            print(f"{RED}{text}{RESET}")
-        elif value >= 50:
-            print(f"{YELLOW}{text}{RESET}")
-        else:
-            print(text)
+        lines.append(colorize_top(text, value))
+    return lines
 
 
-def print_alerts(current_data: Dict[str, Dict[str, Result]]) -> None:
+def build_node_alert_lines(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
     alerts = []
 
     for cluster, nodo_map in current_data.items():
@@ -414,27 +409,29 @@ def print_alerts(current_data: Dict[str, Dict[str, Result]]) -> None:
             elif r.encolados >= th["warning"]:
                 alerts.append(("WARNING ", cluster, nodo, r.encolados))
 
-    print("\nALERTAS NODOS\n")
+    lines = ["ALERTAS NODOS", ""]
 
     if not alerts:
-        print(f"{GREEN}OK - Sin alertas{RESET}")
-        return
+        lines.append(f"{GREEN}OK - Sin alertas{RESET}")
+        return lines
 
     for level, cluster, nodo, value in sorted(alerts, key=lambda x: x[3], reverse=True):
         if level.strip() == "CRITICAL":
-            print(f"{RED}{level}{RESET} {cluster} {nodo} → {fmt_num_dot(value)}")
+            lines.append(f"{RED}{level}{RESET} {cluster} {nodo} → {fmt_num_dot(value)}")
         else:
-            print(f"{YELLOW}{level}{RESET} {cluster} {nodo} → {fmt_num_dot(value)}")
+            lines.append(f"{YELLOW}{level}{RESET} {cluster} {nodo} → {fmt_num_dot(value)}")
+
+    return lines
 
 
-def print_total_alerts(current_data: Dict[str, Dict[str, Result]]) -> None:
-    print("\nALERTAS TOTALES CLUSTER\n")
+def print_two_column_panels(left_lines: List[str], right_lines: List[str], left_width: int = 38) -> None:
+    total_rows = max(len(left_lines), len(right_lines))
 
-    for group in GROUPS:
-        cluster = group["cluster"]
-        total = sum(r.encolados for r in current_data.get(cluster, {}).values())
-        status = total_status_colored(cluster, total)
-        print(f"{cluster:<13} → {status} | Total={fmt_num_dot(total)}")
+    left = left_lines + [""] * (total_rows - len(left_lines))
+    right = right_lines + [""] * (total_rows - len(right_lines))
+
+    for l, r in zip(left, right):
+        print(f"{l.ljust(left_width)}    {r}")
 
 
 # =========================
@@ -467,9 +464,12 @@ def run_monitor(auth: Tuple[str, str]) -> None:
             print_cluster_summary_panel(current_data)
             print()
             print_combined_table(timestamp, current_data, previous_data)
-            print_top_nodes(current_data)
-            print_alerts(current_data)
-            print_total_alerts(current_data)
+            print()
+
+            left_lines = build_top_nodes_lines(current_data)
+            right_lines = build_node_alert_lines(current_data)
+            print_two_column_panels(left_lines, right_lines)
+
             print("\nPulsa ESC para salir")
 
             previous_data = {
