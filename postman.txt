@@ -167,9 +167,10 @@ def total_status_text(cluster: str, total: int) -> str:
 
 def total_status_colored_fixed(cluster: str, total: int, width: int = 10) -> str:
     status = total_status_text(cluster, total).center(width)
-    if status.strip() == "CRITICAL":
+    raw = status.strip()
+    if raw == "CRITICAL":
         return f"{RED}{status}{RESET}"
-    if status.strip() == "WARNING":
+    if raw == "WARNING":
         return f"{YELLOW}{status}{RESET}"
     return f"{GREEN}{status}{RESET}"
 
@@ -193,6 +194,13 @@ def color_by_threshold(text: str, value: int, warning: int, critical: int) -> st
 def queue_color(cluster: str, text: str, value: int) -> str:
     th = CLUSTER_THRESHOLDS[cluster]
     return color_by_threshold(text, value, th["warning"], th["critical"])
+
+
+def fit_text(text: str, width: int) -> str:
+    plain = str(text)
+    if len(plain) > width:
+        return plain[: width - 3] + "..."
+    return plain.ljust(width)
 
 
 def health_score(r: Result, prev_queue: int) -> int:
@@ -402,14 +410,14 @@ def build_node_alert_lines(current_data: Dict[str, Dict[str, Result]]) -> List[s
 
         for nodo, r in nodo_map.items():
             if r.error:
-                alerts.append(f"{RED}{cluster} {nodo} → Sin respuesta{RESET}")
+                alerts.append(f"{cluster} {nodo} → Sin respuesta")
             elif r.encolados >= th["critical"]:
-                alerts.append(f"{RED}{cluster} {nodo} → cola={fmt_num_dot(r.encolados)}{RESET}")
+                alerts.append(f"{cluster} {nodo} → cola={fmt_num_dot(r.encolados)}")
             elif r.encolados >= th["warning"]:
-                alerts.append(f"{YELLOW}{cluster} {nodo} → cola={fmt_num_dot(r.encolados)}{RESET}")
+                alerts.append(f"{cluster} {nodo} → cola={fmt_num_dot(r.encolados)}")
 
     if not alerts:
-        alerts.append(f"{GREEN}Sin alertas{RESET}")
+        alerts.append("Sin alertas")
 
     return alerts
 
@@ -426,11 +434,10 @@ def build_risk_nodes_lines(
             diag = diagnose_node(r, prev_q)
 
             if diag != "OK":
-                color = RED if diag == "Sin respuesta" else YELLOW
-                findings.append(f"{color}{cluster} {nodo} → {diag}{RESET}")
+                findings.append(f"{cluster} {nodo} → {diag}")
 
     if not findings:
-        findings.append(f"{GREEN}Sin nodos en riesgo{RESET}")
+        findings.append("Sin nodos en riesgo")
 
     return findings
 
@@ -575,25 +582,26 @@ def build_advanced_findings(
 
 
 # =========================================================
-# BLOQUES SUPERIORES
+# BLOQUE SUPERIOR EN 3 COLUMNAS
 # =========================================================
-def print_cluster_summary(
+def build_cluster_summary_lines(
     current_data: Dict[str, Dict[str, Result]],
     previous_data: Dict[str, Dict[str, int]],
-) -> None:
+) -> List[str]:
     nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
-    c1 = 14
-    c2 = 10
+    c1 = 13
+    c2 = 8
     c3 = 10
-    c4 = 22
+    c4 = 18
 
-    print("RESUMEN CLUSTERS")
-    print("─" * (c1 + c2 + c3 + c4 + 6))
-    print(
-        f"{'Cluster':<{c1}}"
-        f"{'Total':>{c2}}  "
-        f"{'Estado':^{c3}}  "
+    lines: List[str] = []
+    lines.append("RESUMEN CLUSTERS")
+    lines.append("─" * (c1 + c2 + c3 + c4 + 9))
+    lines.append(
+        f"{'Cluster':<{c1}} | "
+        f"{'Total':^{c2}} | "
+        f"{'Estado':^{c3}} | "
         f"{'Última variación':^{c4}}"
     )
 
@@ -614,37 +622,95 @@ def print_cluster_summary(
             else:
                 variation_text = "Sin cambios"
 
-        status_colored = total_status_colored_fixed(cluster, current_total, c3)
+        status_text = total_status_text(cluster, current_total)
 
-        print(
-            f"{cluster:<{c1}}"
-            f"{fmt_num_dot(current_total):>{c2}}  "
-            f"{status_colored}  "
-            f"{variation_text:>{c4}}"
+        lines.append(
+            f"{cluster:<{c1}} | "
+            f"{fmt_num_dot(current_total):>{c2}} | "
+            f"{status_text:^{c3}} | "
+            f"{variation_text:^{c4}}"
         )
 
-    print()
+    return lines
 
 
-def print_alerts_and_risks(
+def build_alert_column_lines(
+    current_data: Dict[str, Dict[str, Result]],
+) -> List[str]:
+    lines: List[str] = []
+    lines.append("ALERTAS NODOS")
+    lines.append("─" * 42)
+
+    found = False
+    for cluster, nodo_map in current_data.items():
+        th = CLUSTER_THRESHOLDS[cluster]
+
+        for nodo, r in nodo_map.items():
+            if r.error:
+                lines.append(f"{cluster} {nodo} → Sin respuesta")
+                found = True
+            elif r.encolados >= th["critical"]:
+                lines.append(f"{cluster} {nodo} → cola={fmt_num_dot(r.encolados)}")
+                found = True
+            elif r.encolados >= th["warning"]:
+                lines.append(f"{cluster} {nodo} → cola={fmt_num_dot(r.encolados)}")
+                found = True
+
+    if not found:
+        lines.append("Sin alertas")
+
+    return lines
+
+
+def build_risk_column_lines(
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+) -> List[str]:
+    lines: List[str] = []
+    lines.append("NODOS EN RIESGO")
+    lines.append("─" * 42)
+
+    found = False
+    for cluster, nodo_map in current_data.items():
+        for nodo, r in nodo_map.items():
+            prev_q = previous_data.get(cluster, {}).get(nodo, r.encolados)
+            diag = diagnose_node(r, prev_q)
+
+            if diag != "OK":
+                lines.append(f"{cluster} {nodo} → {diag}")
+                found = True
+
+    if not found:
+        lines.append("Sin nodos en riesgo")
+
+    return lines
+
+
+def print_top_three_columns(
     current_data: Dict[str, Dict[str, Result]],
     previous_data: Dict[str, Dict[str, int]],
 ) -> None:
-    alert_lines = build_node_alert_lines(current_data)
-    risk_lines = build_risk_nodes_lines(current_data, previous_data)
+    col1_w = 58
+    col2_w = 42
+    col3_w = 42
+    gap = "   "
 
-    print("ALERTAS NODOS")
-    print("─" * 78)
-    for line in alert_lines:
-        print(line)
+    col1 = build_cluster_summary_lines(current_data, previous_data)
+    col2 = build_alert_column_lines(current_data)
+    col3 = build_risk_column_lines(current_data, previous_data)
 
-    print()
-    print("NODOS EN RIESGO")
-    print("─" * 78)
-    for line in risk_lines:
-        print(line)
+    rows = max(len(col1), len(col2), len(col3))
 
-    print()
+    col1 += [""] * (rows - len(col1))
+    col2 += [""] * (rows - len(col2))
+    col3 += [""] * (rows - len(col3))
+
+    for a, b, c in zip(col1, col2, col3):
+        print(
+            f"{fit_text(a, col1_w)}{gap}"
+            f"{fit_text(b, col2_w)}{gap}"
+            f"{fit_text(c, col3_w)}"
+        )
 
 
 # =========================================================
@@ -957,8 +1023,8 @@ def run_monitor(auth: Tuple[str, str]) -> None:
             def draw():
                 print("MONITOR COLAS ESA\n")
 
-                print_cluster_summary(current_data, previous_data)
-                print_alerts_and_risks(current_data, previous_data)
+                print_top_three_columns(current_data, previous_data)
+                print()
 
                 print_orange_separator()
                 print()
