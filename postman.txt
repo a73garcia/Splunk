@@ -366,6 +366,47 @@ def build_status_incidents(current_data: Dict[str, Dict[str, Result]]) -> List[T
     return incidents
 
 
+def build_node_alert_lines(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
+    alerts: List[str] = []
+
+    for cluster, nodo_map in current_data.items():
+        th = CLUSTER_THRESHOLDS[cluster]
+
+        for nodo, r in nodo_map.items():
+            if r.error:
+                alerts.append(f"{RED}{cluster} {nodo} → Sin respuesta{RESET}")
+            elif r.encolados >= th["critical"]:
+                alerts.append(f"{RED}{cluster} {nodo} → cola={fmt_num_dot(r.encolados)}{RESET}")
+            elif r.encolados >= th["warning"]:
+                alerts.append(f"{YELLOW}{cluster} {nodo} → cola={fmt_num_dot(r.encolados)}{RESET}")
+
+    if not alerts:
+        alerts.append(f"{GREEN}Sin alertas{RESET}")
+
+    return alerts
+
+
+def build_risk_nodes_lines(
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+) -> List[str]:
+    findings: List[str] = []
+
+    for cluster, nodo_map in current_data.items():
+        for nodo, r in nodo_map.items():
+            prev_q = previous_data.get(cluster, {}).get(nodo, r.encolados)
+            diag = diagnose_node(r, prev_q)
+
+            if diag != "OK":
+                color = RED if diag == "Sin respuesta" else YELLOW
+                findings.append(f"{color}{cluster} {nodo} → {diag}{RESET}")
+
+    if not findings:
+        findings.append(f"{GREEN}Sin nodos en riesgo{RESET}")
+
+    return findings
+
+
 def detect_mail_backlog_real(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
     findings = []
 
@@ -506,7 +547,7 @@ def build_advanced_findings(
 
 
 # =========================================================
-# BLOQUES SUPERIORES LIMPIOS
+# BLOQUES SUPERIORES
 # =========================================================
 def print_cluster_summary(
     current_data: Dict[str, Dict[str, Result]],
@@ -550,13 +591,13 @@ def print_alerts_and_risks(
 
     print("ALERTAS NODOS")
     print("─" * 78)
-    for line in alert_lines[2:]:
+    for line in alert_lines:
         print(line)
 
     print()
     print("NODOS EN RIESGO")
     print("─" * 78)
-    for line in risk_lines[2:]:
+    for line in risk_lines:
         print(line)
 
     print()
