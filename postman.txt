@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import os
-import re
 import time
 import threading
 import msvcrt
@@ -33,40 +32,18 @@ GREEN = "\033[92m"
 ORANGE = "\033[38;5;208m"
 RESET = "\033[0m"
 
-ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-
 GROUPS = [
-    {"cluster": "Europa",       "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
-    {"cluster": "América",      "pattern": "https://dh5504-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
-    {"cluster": "Brasil",       "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status",      "start": 1, "end": 20},
-    {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
+    {"cluster": "Europa",       "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status"},
+    {"cluster": "América",      "pattern": "https://dh5504-esa{idx}.c3s2.iphmx.com/xml/status"},
+    {"cluster": "Brasil",       "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status"},
+    {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status"},
 ]
 
 CLUSTER_THRESHOLDS = {
-    "Europa": {
-        "warning": 50,
-        "critical": 100,
-        "total_warning": 200,
-        "total_critical": 300,
-    },
-    "América": {
-        "warning": 50,
-        "critical": 100,
-        "total_warning": 200,
-        "total_critical": 300,
-    },
-    "Brasil": {
-        "warning": 50,
-        "critical": 100,
-        "total_warning": 200,
-        "total_critical": 300,
-    },
-    "Aplicaciones": {
-        "warning": 20,
-        "critical": 40,
-        "total_warning": 80,
-        "total_critical": 120,
-    },
+    "Europa": {"warning": 50, "critical": 100, "total_warning": 200, "total_critical": 300},
+    "América": {"warning": 50, "critical": 100, "total_warning": 200, "total_critical": 300},
+    "Brasil": {"warning": 50, "critical": 100, "total_warning": 200, "total_critical": 300},
+    "Aplicaciones": {"warning": 20, "critical": 40, "total_warning": 80, "total_critical": 120},
 }
 
 ADV_THRESHOLDS = {
@@ -163,13 +140,13 @@ def trend_symbol(prev: int, cur: int) -> str:
 def total_status_colored(cluster: str, total: int) -> str:
     th = CLUSTER_THRESHOLDS[cluster]
     if total >= th["total_critical"]:
-        return f"{RED}{'CRITICAL':<8}{RESET}"
+        return f"{RED}CRITICAL{RESET}"
     if total >= th["total_warning"]:
-        return f"{YELLOW}{'WARNING ':<8}{RESET}"
-    return f"{GREEN}{'OK':^8}{RESET}"
+        return f"{YELLOW}WARNING{RESET}"
+    return f"{GREEN}OK{RESET}"
 
 
-def print_orange_separator(width: int = 220) -> None:
+def print_orange_separator(width: int = 210) -> None:
     print(f"{ORANGE}{'═' * width}{RESET}")
 
 
@@ -192,8 +169,8 @@ def queue_color(cluster: str, text: str, value: int) -> str:
 
 def health_score(r: Result, prev_queue: int) -> int:
     score = 100
-
     q_th = CLUSTER_THRESHOLDS[r.cluster]
+
     if r.encolados >= q_th["critical"]:
         score -= 35
     elif r.encolados >= q_th["warning"]:
@@ -259,26 +236,6 @@ def diagnose_node(r: Result, prev_queue: int) -> str:
     if r.encolados == 0 and r.conn_in == 0 and r.conn_out == 0:
         return "Sin actividad"
     return "OK"
-
-
-def strip_ansi(text: str) -> str:
-    return ANSI_RE.sub("", text)
-
-
-def visible_len(text: str) -> int:
-    return len(strip_ansi(text))
-
-
-def ansi_ljust(text: str, width: int) -> str:
-    pad = max(0, width - visible_len(text))
-    return text + (" " * pad)
-
-
-def ansi_truncate(text: str, width: int) -> str:
-    plain = strip_ansi(text)
-    if len(plain) <= width:
-        return text
-    return plain[:width]
 
 
 # =========================================================
@@ -503,7 +460,7 @@ def build_advanced_findings(
     previous_data: Dict[str, Dict[str, int]],
     history: Dict[str, Dict[str, List[int]]],
 ) -> List[str]:
-    lines: List[str] = ["ANÁLISIS AVANZADO", ""]
+    lines: List[str] = []
 
     backlog = detect_mail_backlog_real(current_data)
     saturation = detect_smtp_saturation(current_data)
@@ -549,108 +506,21 @@ def build_advanced_findings(
 
 
 # =========================================================
-# PANELES SUPERIORES
+# BLOQUES SUPERIORES LIMPIOS
 # =========================================================
-def build_node_alert_lines(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
-    alerts = []
-
-    for cluster, nodo_map in current_data.items():
-        th = CLUSTER_THRESHOLDS[cluster]
-        for nodo, r in nodo_map.items():
-            if r.error:
-                alerts.append((f"{RED}ERROR   {RESET}", cluster, nodo, "Sin respuesta"))
-            elif r.encolados >= th["critical"]:
-                alerts.append((f"{RED}CRITICAL{RESET}", cluster, nodo, fmt_num_dot(r.encolados)))
-            elif r.encolados >= th["warning"]:
-                alerts.append((f"{YELLOW}WARNING {RESET}", cluster, nodo, fmt_num_dot(r.encolados)))
-
-    lines = ["ALERTAS NODOS", ""]
-
-    if not alerts:
-        lines.append(f"{GREEN}OK - Sin alertas{RESET}")
-        return lines
-
-    for level, cluster, nodo, value in alerts[:18]:
-        lines.append(f"{level} {cluster} {nodo} → {value}")
-
-    return lines
-
-
-def build_risk_nodes_lines(
-    current_data: Dict[str, Dict[str, Result]],
-    previous_data: Dict[str, Dict[str, int]],
-) -> List[str]:
-    lines = ["NODOS EN RIESGO", ""]
-    findings = []
-
-    for cluster_map in current_data.values():
-        for r in cluster_map.values():
-            prev_q = previous_data.get(r.cluster, {}).get(r.nodo, r.encolados)
-            diag = diagnose_node(r, prev_q)
-            if diag != "OK":
-                findings.append((r.nodo, r.cluster, diag))
-
-    if not findings:
-        lines.append(f"{GREEN}OK - Sin nodos en riesgo{RESET}")
-        return lines
-
-    dedup = []
-    seen = set()
-    for item in findings:
-        if item not in seen:
-            seen.add(item)
-            dedup.append(item)
-
-    for nodo, cluster, diag in dedup[:18]:
-        color = RED if diag == "Sin respuesta" else YELLOW
-        lines.append(f"{color}{nodo} {cluster}: {diag}{RESET}")
-
-    return lines
-
-
-def print_two_column_panels(left_lines: List[str], right_lines: List[str], left_width: int = 78, gap: int = 5) -> None:
-    inner_left = left_width - 4
-    inner_right = left_width - 4
-
-    total_rows = max(len(left_lines), len(right_lines))
-    left = left_lines + [""] * (total_rows - len(left_lines))
-    right = right_lines + [""] * (total_rows - len(right_lines))
-
-    top_left = f"{ORANGE}╔{'═' * inner_left}╗{RESET}"
-    top_right = f"{ORANGE}╔{'═' * inner_right}╗{RESET}"
-    mid_gap = " " * gap
-
-    print(f"{top_left}{mid_gap}{top_right}")
-
-    for l, r in zip(left, right):
-        ltxt = ansi_ljust(ansi_truncate(l, inner_left), inner_left)
-        rtxt = ansi_ljust(ansi_truncate(r, inner_right), inner_right)
-        print(
-            f"{ORANGE}║{RESET}{ltxt}{ORANGE}║{RESET}"
-            f"{mid_gap}"
-            f"{ORANGE}║{RESET}{rtxt}{ORANGE}║{RESET}"
-        )
-
-    bottom_left = f"{ORANGE}╚{'═' * inner_left}╝{RESET}"
-    bottom_right = f"{ORANGE}╚{'═' * inner_right}╝{RESET}"
-    print(f"{bottom_left}{mid_gap}{bottom_right}")
-
-
-def print_cluster_summary_with_side_panels(
+def print_cluster_summary(
     current_data: Dict[str, Dict[str, Result]],
     previous_data: Dict[str, Dict[str, int]],
 ) -> None:
     nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
-    summary_lines = ["RESUMEN CLUSTERS", ""]
-    header = f"{'Cluster':<13} | {'Total':>10} | {'Estado':^8} | {'Última variación':^22}"
-    summary_lines.append(header)
-    summary_lines.append("-" * len(header))
+    print("RESUMEN CLUSTERS")
+    print("─" * 78)
+    print(f"{'Cluster':<13} {'Total':>10} {'Estado':>12} {'Última variación':>22}")
 
     for group in GROUPS:
         cluster = group["cluster"]
         current_total = sum(r.encolados for r in current_data.get(cluster, {}).values())
-
         prev_map = previous_data.get(cluster, {})
         previous_total = sum(prev_map.get(nodo, 0) for nodo in nodos)
 
@@ -666,20 +536,30 @@ def print_cluster_summary_with_side_panels(
                 variation_text = "Sin cambios"
 
         status_colored = total_status_colored(cluster, current_total)
+        print(f"{cluster:<13} {fmt_num_dot(current_total):>10} {status_colored:>12} {variation_text:>22}")
 
-        summary_lines.append(
-            f"{cluster:<13} | {fmt_num_dot(current_total):>10} | {status_colored} | {variation_text:^22}"
-        )
+    print()
 
+
+def print_alerts_and_risks(
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+) -> None:
     alert_lines = build_node_alert_lines(current_data)
     risk_lines = build_risk_nodes_lines(current_data, previous_data)
 
-    right_lines = ["ALERTAS NODOS / NODOS EN RIESGO", ""]
-    right_lines.extend(alert_lines)
-    right_lines.append("")
-    right_lines.extend(risk_lines)
+    print("ALERTAS NODOS")
+    print("─" * 78)
+    for line in alert_lines[2:]:
+        print(line)
 
-    print_two_column_panels(summary_lines, right_lines, left_width=78, gap=5)
+    print()
+    print("NODOS EN RIESGO")
+    print("─" * 78)
+    for line in risk_lines[2:]:
+        print(line)
+
+    print()
 
 
 # =========================================================
@@ -953,8 +833,7 @@ def print_advanced_findings(
     lines = build_advanced_findings(current_data, previous_data, history)
 
     print("ANÁLISIS AVANZADO\n")
-    body = lines[2:] if len(lines) > 2 and lines[0] == "ANÁLISIS AVANZADO" else lines
-    for line in body:
+    for line in lines:
         print(line)
 
 
@@ -992,19 +871,24 @@ def run_monitor(auth: Tuple[str, str]) -> None:
 
             clear_screen()
             print("MONITOR COLAS ESA\n")
-            print_cluster_summary_with_side_panels(current_data, previous_data)
-            print()
+
+            print_cluster_summary(current_data, previous_data)
+            print_alerts_and_risks(current_data, previous_data)
+
             print_orange_separator()
             print()
             print_queue_table(timestamp, current_data, previous_data)
+
             print()
             print_orange_separator()
             print()
             print_node_health_table(current_data, previous_data)
+
             print()
             print_orange_separator()
             print()
             print_status_incidents(current_data)
+
             print()
             print_orange_separator()
             print()
