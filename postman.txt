@@ -274,6 +274,32 @@ def diagnose_node(r: Result, prev_queue: int) -> str:
     return "OK"
 
 
+def natural_alert_text(cluster: str, nodo: str, r: Result, severity: str) -> str:
+    qty = fmt_num_dot(r.encolados)
+    if severity == "error":
+        return f"No hay respuesta del nodo {nodo} de {cluster}"
+    if severity == "critical":
+        return f"El nodo {nodo} de {cluster} tiene {qty} correos encolados"
+    return f"El nodo {nodo} de {cluster} acumula {qty} correos encolados"
+
+
+def natural_risk_text(cluster: str, nodo: str, diag: str) -> str:
+    mapping = {
+        "Sin respuesta": f"No hay respuesta del nodo {nodo} de {cluster}",
+        "Salida alta": f"Las conexiones salientes están altas en {nodo} de {cluster}",
+        "CPU alta": f"La CPU está alta en {nodo} de {cluster}",
+        "RAM alta": f"La memoria RAM está alta en {nodo} de {cluster}",
+        "Queue sin salida": f"La cola no está saliendo en {nodo} de {cluster}",
+        "Queue creciendo": f"La cola está creciendo en {nodo} de {cluster}",
+        "Muchos recips": f"Hay muchos destinatarios activos en {nodo} de {cluster}",
+        "Sin actividad": f"No se detecta actividad en {nodo} de {cluster}",
+    }
+    if diag.startswith("Status="):
+        status = diag.split("=", 1)[1]
+        return f"El estado del nodo {nodo} de {cluster} es {status}"
+    return mapping.get(diag, f"Se detecta {diag.lower()} en {nodo} de {cluster}")
+
+
 # =========================================================
 # ESC LISTENER
 # =========================================================
@@ -410,14 +436,14 @@ def build_node_alert_lines(current_data: Dict[str, Dict[str, Result]]) -> List[s
 
         for nodo, r in nodo_map.items():
             if r.error:
-                alerts.append(f"{cluster} {nodo} → Sin respuesta")
+                alerts.append(natural_alert_text(cluster, nodo, r, "error"))
             elif r.encolados >= th["critical"]:
-                alerts.append(f"{cluster} {nodo} → cola={fmt_num_dot(r.encolados)}")
+                alerts.append(natural_alert_text(cluster, nodo, r, "critical"))
             elif r.encolados >= th["warning"]:
-                alerts.append(f"{cluster} {nodo} → cola={fmt_num_dot(r.encolados)}")
+                alerts.append(natural_alert_text(cluster, nodo, r, "warning"))
 
     if not alerts:
-        alerts.append("Sin alertas")
+        alerts.append("No se han detectado alertas en los nodos")
 
     return alerts
 
@@ -434,10 +460,10 @@ def build_risk_nodes_lines(
             diag = diagnose_node(r, prev_q)
 
             if diag != "OK":
-                findings.append(f"{cluster} {nodo} → {diag}")
+                findings.append(natural_risk_text(cluster, nodo, diag))
 
     if not findings:
-        findings.append("Sin nodos en riesgo")
+        findings.append("No se han detectado nodos en riesgo")
 
     return findings
 
@@ -647,17 +673,17 @@ def build_alert_column_lines(
 
         for nodo, r in nodo_map.items():
             if r.error:
-                lines.append(f"{cluster} {nodo} → Sin respuesta")
+                lines.append(natural_alert_text(cluster, nodo, r, "error"))
                 found = True
             elif r.encolados >= th["critical"]:
-                lines.append(f"{cluster} {nodo} → cola={fmt_num_dot(r.encolados)}")
+                lines.append(natural_alert_text(cluster, nodo, r, "critical"))
                 found = True
             elif r.encolados >= th["warning"]:
-                lines.append(f"{cluster} {nodo} → cola={fmt_num_dot(r.encolados)}")
+                lines.append(natural_alert_text(cluster, nodo, r, "warning"))
                 found = True
 
     if not found:
-        lines.append("Sin alertas")
+        lines.append("No se han detectado alertas")
 
     return lines
 
@@ -677,11 +703,11 @@ def build_risk_column_lines(
             diag = diagnose_node(r, prev_q)
 
             if diag != "OK":
-                lines.append(f"{cluster} {nodo} → {diag}")
+                lines.append(natural_risk_text(cluster, nodo, diag))
                 found = True
 
     if not found:
-        lines.append("Sin nodos en riesgo")
+        lines.append("No se han detectado nodos en riesgo")
 
     return lines
 
@@ -968,12 +994,15 @@ def print_status_incidents(current_data: Dict[str, Dict[str, Result]]) -> None:
     print("INCIDENCIAS\n")
 
     if not incidents:
-        print(f"{GREEN}OK - Sin incidencias{RESET}")
+        print(f"{GREEN}No se han detectado incidencias{RESET}")
         return
 
     for cluster, nodo, msg in incidents:
-        color = RED if msg == "Sin respuesta" else YELLOW
-        print(f"{color}{cluster} {nodo} → {msg}{RESET}")
+        if msg == "Sin respuesta":
+            print(f"{RED}No hay respuesta del nodo {nodo} de {cluster}{RESET}")
+        else:
+            status = msg.split("=", 1)[1] if "=" in msg else msg
+            print(f"{YELLOW}El estado del nodo {nodo} de {cluster} es {status}{RESET}")
 
 
 def print_advanced_findings(
