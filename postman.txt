@@ -73,8 +73,6 @@ ADV_THRESHOLDS = {
     "ram_critical": 90,
     "conn_warning": 20,
     "conn_critical": 40,
-    "growth_warning": 25,
-    "growth_critical": 75,
 }
 
 stop_event = threading.Event()
@@ -128,12 +126,14 @@ def to_int(value: Optional[str]) -> int:
     s = str(value).strip()
     if not s or s.upper() == "N/A":
         return 0
+
     digits = []
     for ch in s:
         if ch.isdigit() or ch == ".":
             digits.append(ch)
         else:
             break
+
     try:
         return int(float("".join(digits))) if digits else 0
     except Exception:
@@ -188,60 +188,6 @@ def color_by_threshold(text: str, value: int, warning: int, critical: int) -> st
 def queue_color(cluster: str, text: str, value: int) -> str:
     th = CLUSTER_THRESHOLDS[cluster]
     return color_by_threshold(text, value, th["warning"], th["critical"])
-
-
-def health_score(r: Result, prev_queue: int) -> int:
-    score = 100
-
-    if r.encolados >= CLUSTER_THRESHOLDS[r.cluster]["critical"]:
-        score -= 35
-    elif r.encolados >= CLUSTER_THRESHOLDS[r.cluster]["warning"]:
-        score -= 20
-
-    if r.cpu >= ADV_THRESHOLDS["cpu_critical"]:
-        score -= 20
-    elif r.cpu >= ADV_THRESHOLDS["cpu_warning"]:
-        score -= 10
-
-    if r.ram >= ADV_THRESHOLDS["ram_critical"]:
-        score -= 15
-    elif r.ram >= ADV_THRESHOLDS["ram_warning"]:
-        score -= 8
-
-    if r.conn_out >= ADV_THRESHOLDS["conn_critical"]:
-        score -= 10
-    elif r.conn_out >= ADV_THRESHOLDS["conn_warning"]:
-        score -= 5
-
-    growth = r.encolados - prev_queue
-    if growth >= ADV_THRESHOLDS["growth_critical"]:
-        score -= 15
-    elif growth >= ADV_THRESHOLDS["growth_warning"]:
-        score -= 8
-
-    return max(0, min(100, score))
-
-
-def diagnose_node(r: Result, prev_queue: int) -> str:
-    growth = r.encolados - prev_queue
-
-    if r.error:
-        return "ERROR"
-    if r.encolados >= 100 and r.conn_out <= 5:
-        return "Queue sin salida"
-    if growth >= 75 and r.conn_out >= 20:
-        return "Queue creciendo"
-    if r.cpu >= 85:
-        return "CPU alta"
-    if r.ram >= 90:
-        return "RAM alta"
-    if r.conn_out >= 40:
-        return "Salida alta"
-    if r.active_recips >= 5000 and r.encolados >= 50:
-        return "Muchos recips"
-    if r.encolados == 0 and r.conn_in == 0 and r.conn_out == 0:
-        return "Sin actividad"
-    return "OK"
 
 
 # =========================================================
@@ -433,7 +379,7 @@ def print_combined_table(
     cluster_order = ["Europa", "América", "Brasil", "Aplicaciones"]
     nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
-    ts_width = 5   # HH:SS
+    ts_width = 5
     nodo_width = 6
     ant_w = 9
     act_w = 9
@@ -522,59 +468,81 @@ def print_combined_table(
     print(total_line)
 
 
-def print_node_health_table(
-    current_data: Dict[str, Dict[str, Result]],
-    previous_data: Dict[str, Dict[str, int]],
-) -> None:
+def print_node_health_table(current_data: Dict[str, Dict[str, Result]]) -> None:
     print("SALUD OPERATIVA DE NODOS\n")
 
-    headers = ["Nodo", "Cluster", "Queue", "CPU", "RAM", "ConnIn", "ConnOut", "ActRecips", "Health", "Diagnóstico"]
-    widths = [6, 13, 9, 5, 5, 7, 8, 9, 6, 16]
+    cluster_order = ["Europa", "América", "Brasil", "Aplicaciones"]
+    nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
-    def row(vals: List[str]) -> str:
-        return " | ".join(vals[i].ljust(widths[i]) for i in range(len(vals)))
+    nodo_w = 6
+    q_w = 7
+    cpu_w = 5
+    ram_w = 5
+    ci_w = 6
+    co_w = 6
 
-    print(row(headers))
-    print("-" * (sum(widths) + (3 * (len(widths) - 1))))
+    col_sep = " | "
+    cluster_sep = " || "
 
-    items: List[Result] = []
-    for cluster_map in current_data.values():
-        items.extend(cluster_map.values())
+    cluster_chunk_width = (
+        q_w + len(col_sep) + cpu_w + len(col_sep) + ram_w + len(col_sep) + ci_w + len(col_sep) + co_w
+    )
 
-    items = sorted(items, key=lambda x: (x.cluster, x.nodo))
+    def fmt_chunk(r: Optional[Result], cluster: str) -> str:
+        if r is None:
+            return (
+                f"{'0'.rjust(q_w)}{col_sep}"
+                f"{'0'.rjust(cpu_w)}{col_sep}"
+                f"{'0'.rjust(ram_w)}{col_sep}"
+                f"{'0'.rjust(ci_w)}{col_sep}"
+                f"{'0'.rjust(co_w)}"
+            )
 
-    for r in items:
-        prev_q = previous_data.get(r.cluster, {}).get(r.nodo, r.encolados)
-        health = health_score(r, prev_q)
-        diag = diagnose_node(r, prev_q)
+        q_txt = queue_color(cluster, fmt_num_dot(r.encolados).rjust(q_w), r.encolados)
+        cpu_txt = color_by_threshold(str(r.cpu).rjust(cpu_w), r.cpu, ADV_THRESHOLDS["cpu_warning"], ADV_THRESHOLDS["cpu_critical"])
+        ram_txt = color_by_threshold(str(r.ram).rjust(ram_w), r.ram, ADV_THRESHOLDS["ram_warning"], ADV_THRESHOLDS["ram_critical"])
+        ci_txt = color_by_threshold(fmt_num_dot(r.conn_in).rjust(ci_w), r.conn_in, ADV_THRESHOLDS["conn_warning"], ADV_THRESHOLDS["conn_critical"])
+        co_txt = color_by_threshold(fmt_num_dot(r.conn_out).rjust(co_w), r.conn_out, ADV_THRESHOLDS["conn_warning"], ADV_THRESHOLDS["conn_critical"])
 
-        queue_txt = queue_color(r.cluster, fmt_num_dot(r.encolados).rjust(widths[2]), r.encolados)
-        cpu_txt = color_by_threshold(f"{r.cpu}%".rjust(widths[3]), r.cpu, ADV_THRESHOLDS["cpu_warning"], ADV_THRESHOLDS["cpu_critical"])
-        ram_txt = color_by_threshold(f"{r.ram}%".rjust(widths[4]), r.ram, ADV_THRESHOLDS["ram_warning"], ADV_THRESHOLDS["ram_critical"])
-        conn_in_txt = color_by_threshold(fmt_num_dot(r.conn_in).rjust(widths[5]), r.conn_in, ADV_THRESHOLDS["conn_warning"], ADV_THRESHOLDS["conn_critical"])
-        conn_out_txt = color_by_threshold(fmt_num_dot(r.conn_out).rjust(widths[6]), r.conn_out, ADV_THRESHOLDS["conn_warning"], ADV_THRESHOLDS["conn_critical"])
-        act_recips_txt = fmt_num_dot(r.active_recips).rjust(widths[7])
+        return f"{q_txt}{col_sep}{cpu_txt}{col_sep}{ram_txt}{col_sep}{ci_txt}{col_sep}{co_txt}"
 
-        if health < 60:
-            health_txt = f"{RED}{str(health).rjust(widths[8])}{RESET}"
-        elif health < 80:
-            health_txt = f"{YELLOW}{str(health).rjust(widths[8])}{RESET}"
-        else:
-            health_txt = f"{GREEN}{str(health).rjust(widths[8])}{RESET}"
+    h1 = (
+        f"| {'Nodo'.ljust(nodo_w)}{cluster_sep}"
+        f"{'Europa'.center(cluster_chunk_width)}{cluster_sep}"
+        f"{'América'.center(cluster_chunk_width)}{cluster_sep}"
+        f"{'Brasil'.center(cluster_chunk_width)}{cluster_sep}"
+        f"{'Aplicaciones'.center(cluster_chunk_width)} |"
+    )
 
-        vals = [
-            r.nodo.ljust(widths[0]),
-            r.cluster.ljust(widths[1]),
-            queue_txt,
-            cpu_txt,
-            ram_txt,
-            conn_in_txt,
-            conn_out_txt,
-            act_recips_txt,
-            health_txt,
-            diag.ljust(widths[9]),
-        ]
-        print(" | ".join(vals))
+    sub = (
+        f"{'Q'.center(q_w)}{col_sep}"
+        f"{'CPU'.center(cpu_w)}{col_sep}"
+        f"{'RAM'.center(ram_w)}{col_sep}"
+        f"{'CI'.center(ci_w)}{col_sep}"
+        f"{'CO'.center(co_w)}"
+    )
+
+    h2 = (
+        f"| {''.ljust(nodo_w)}{cluster_sep}"
+        f"{sub}{cluster_sep}{sub}{cluster_sep}{sub}{cluster_sep}{sub} |"
+    )
+
+    sep = "-" * max(len(h1), len(h2))
+
+    print(h1)
+    print(h2)
+    print(sep)
+
+    for nodo in nodos:
+        line = f"| {nodo.ljust(nodo_w)}"
+
+        for cluster in cluster_order:
+            r = current_data.get(cluster, {}).get(nodo)
+            chunk = fmt_chunk(r, cluster)
+            line += f"{cluster_sep}{chunk}"
+
+        line += " |"
+        print(line)
 
 
 def build_node_alert_lines(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
@@ -621,7 +589,7 @@ def build_operational_findings_lines(
                 findings.append(f"{r.nodo} {r.cluster}: CPU alta ({r.cpu}%)")
             elif r.ram >= ADV_THRESHOLDS["ram_critical"]:
                 findings.append(f"{r.nodo} {r.cluster}: RAM alta ({r.ram}%)")
-            elif growth >= ADV_THRESHOLDS["growth_critical"]:
+            elif growth >= 75:
                 findings.append(f"{r.nodo} {r.cluster}: Queue +{fmt_num_dot(growth)}")
             elif r.encolados >= 100 and r.conn_out <= 5:
                 findings.append(f"{r.nodo} {r.cluster}: cola sin salida")
@@ -684,7 +652,7 @@ def run_monitor(auth: Tuple[str, str]) -> None:
             print()
             print_orange_separator()
             print()
-            print_node_health_table(current_data, previous_data)
+            print_node_health_table(current_data)
             print()
             print_orange_separator()
             print()
