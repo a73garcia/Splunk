@@ -6,7 +6,7 @@ import time
 import threading
 import msvcrt
 from dataclasses import dataclass
-from typing import Optional, List, Dict
+from typing import Optional, Dict
 from datetime import datetime
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -14,23 +14,19 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import urllib3
 
+urllib3.disable_warnings()
 
 CREDENTIALS_FILE = "credentials.env"
 
-TIMEOUT_SECONDS = 12
+TIMEOUT = 12
+REFRESH = 60
 MAX_WORKERS = 12
-REFRESH_SECONDS = 60
-
-VERIFY_SSL = False
-if not VERIFY_SSL:
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 RED = "\033[91m"
 YELLOW = "\033[93m"
 GREEN = "\033[92m"
 ORANGE = "\033[38;5;208m"
 RESET = "\033[0m"
-
 
 GROUPS = [
     {"cluster": "Europa", "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status"},
@@ -60,12 +56,12 @@ class Result:
 # helpers
 # ---------------------------------------------------------
 
-def clear_screen():
+def clear():
     os.system("cls")
 
 
-def orange_cluster_sep():
-    return f"{ORANGE}||{RESET}"
+def separator():
+    print(f"{ORANGE}{'═'*80}{RESET}")
 
 
 def fmt(n):
@@ -82,7 +78,7 @@ def load_credentials():
 
             if "=" in line:
 
-                k, v = line.strip().split("=", 1)
+                k,v = line.strip().split("=",1)
 
                 creds[k] = v
 
@@ -93,7 +89,7 @@ def load_credentials():
 # XML parsing
 # ---------------------------------------------------------
 
-def parse_status(xml):
+def parse_xml(xml):
 
     root = ET.fromstring(xml)
 
@@ -102,15 +98,16 @@ def parse_status(xml):
     sys = root.find(".//system")
 
     if sys is not None:
-        status = sys.attrib.get("status", status)
+
+        status = sys.attrib.get("status",status)
 
     gauges = {
-        "msgs_in_work_queue": 0,
-        "cpu_utilization": 0,
-        "ram_utilization": 0,
-        "conn_in": 0,
-        "conn_out": 0,
-        "active_recips": 0,
+        "msgs_in_work_queue":0,
+        "cpu_utilization":0,
+        "ram_utilization":0,
+        "conn_in":0,
+        "conn_out":0,
+        "active_recips":0,
     }
 
     for g in root.findall(".//gauge"):
@@ -124,59 +121,60 @@ def parse_status(xml):
             except:
                 gauges[name] = 0
 
-    return status, gauges
+    return status,gauges
 
 
 # ---------------------------------------------------------
 # network
 # ---------------------------------------------------------
 
-def fetch_node(session, url, auth, cluster, idx):
+def fetch_node(session,url,auth,cluster,idx):
 
-    nodo = f"ESA{idx:02d}"
+    nodo=f"ESA{idx:02d}"
 
     try:
 
-        r = session.get(url, auth=auth, timeout=TIMEOUT_SECONDS, verify=False)
+        r=session.get(url,auth=auth,timeout=TIMEOUT,verify=False)
 
-        if r.status_code != 200:
-            return Result(nodo, cluster, "offline", 0,0,0,0,0,0,"HTTP")
+        if r.status_code!=200:
 
-        status, m = parse_status(r.text)
+            return Result(nodo,cluster,"offline",0,0,0,0,0,0,"HTTP")
+
+        status,g=parse_xml(r.text)
 
         return Result(
             nodo,
             cluster,
             status,
-            m["msgs_in_work_queue"],
-            m["cpu_utilization"],
-            m["ram_utilization"],
-            m["conn_in"],
-            m["conn_out"],
-            m["active_recips"],
+            g["msgs_in_work_queue"],
+            g["cpu_utilization"],
+            g["ram_utilization"],
+            g["conn_in"],
+            g["conn_out"],
+            g["active_recips"]
         )
 
-    except Exception:
+    except:
 
-        return Result(nodo, cluster, "offline",0,0,0,0,0,0,"ERROR")
+        return Result(nodo,cluster,"offline",0,0,0,0,0,0,"ERROR")
 
 
-def fetch_cluster(session, group, auth):
+def fetch_cluster(session,group,auth):
 
-    cluster = group["cluster"]
-    pattern = group["pattern"]
+    cluster=group["cluster"]
+    pattern=group["pattern"]
 
-    results = []
+    results=[]
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
 
-        futures = []
+        futures=[]
 
         for i in range(1,21):
 
-            url = pattern.format(idx=i)
+            url=pattern.format(idx=i)
 
-            futures.append(ex.submit(fetch_node, session, url, auth, cluster, i))
+            futures.append(ex.submit(fetch_node,session,url,auth,cluster,i))
 
         for f in as_completed(futures):
 
@@ -186,71 +184,47 @@ def fetch_cluster(session, group, auth):
 
 
 # ---------------------------------------------------------
-# detecciones avanzadas
+# visual panels
 # ---------------------------------------------------------
 
-def detect_queue_storm(data, prev):
+def print_cluster_summary(data,prev):
 
-    findings = []
+    print("RESUMEN CLUSTERS")
+    print("─"*80)
+
+    print(f"{'Cluster':<15}{'Total':>10}{'Estado':>12}{'Variación':>12}")
 
     for cluster,nodes in data.items():
 
-        for nodo,r in nodes.items():
+        total=sum(r.encolados for r in nodes.values())
 
-            prev_val = prev.get(cluster,{}).get(nodo,r.encolados)
+        prev_total=sum(prev.get(cluster,{}).values())
 
-            growth = r.encolados - prev_val
+        diff=total-prev_total
 
-            if growth > 50:
+        var=f"+{fmt(diff)}" if diff>0 else fmt(diff)
 
-                findings.append(f"{cluster} {nodo}: cola creciendo +{fmt(growth)}")
+        state="OK"
 
-    return findings
+        if total>200:
 
+            state=f"{YELLOW}WARNING{RESET}"
 
-def detect_smtp_saturation(data):
+        if total>300:
 
-    findings = []
+            state=f"{RED}CRITICAL{RESET}"
 
-    for cluster,nodes in data.items():
+        print(f"{cluster:<15}{fmt(total):>10}{state:>12}{var:>12}")
 
-        for nodo,r in nodes.items():
-
-            if r.conn_out > 40:
-
-                findings.append(f"{cluster} {nodo}: salida SMTP alta ({r.conn_out})")
-
-    return findings
+    print()
 
 
-def detect_cluster_imbalance(data):
+def print_alerts(data):
 
-    findings = []
+    print("ALERTAS NODOS")
+    print("─"*80)
 
-    for cluster,nodes in data.items():
-
-        queues = [r.encolados for r in nodes.values()]
-
-        if not queues:
-            continue
-
-        max_q = max(queues)
-        avg_q = sum(queues)/len(queues)
-
-        if avg_q > 0 and max_q/avg_q > 2:
-
-            findings.append(f"{cluster}: cluster desbalanceado")
-
-    return findings
-
-
-# ---------------------------------------------------------
-# panel superior
-# ---------------------------------------------------------
-
-def build_node_alert_lines(data):
-
-    lines=["ALERTAS NODOS",""]
+    found=False
 
     for cluster,nodes in data.items():
 
@@ -258,18 +232,23 @@ def build_node_alert_lines(data):
 
             if r.encolados>100:
 
-                lines.append(f"{RED}{cluster} {nodo} cola={fmt(r.encolados)}{RESET}")
+                print(f"{RED}{cluster} {nodo} cola={fmt(r.encolados)}{RESET}")
 
-    if len(lines)==2:
+                found=True
 
-        lines.append(f"{GREEN}Sin alertas{RESET}")
+    if not found:
 
-    return lines
+        print(f"{GREEN}Sin alertas{RESET}")
+
+    print()
 
 
-def build_risk_nodes_lines(data,prev):
+def print_risks(data,prev):
 
-    lines=["NODOS EN RIESGO",""]
+    print("NODOS EN RIESGO")
+    print("─"*80)
+
+    found=False
 
     for cluster,nodes in data.items():
 
@@ -279,61 +258,22 @@ def build_risk_nodes_lines(data,prev):
 
             if r.encolados-prev_val>20:
 
-                lines.append(f"{YELLOW}{cluster} {nodo} creciendo{RESET}")
+                print(f"{YELLOW}{cluster} {nodo} creciendo{RESET}")
 
-    if len(lines)==2:
+                found=True
 
-        lines.append(f"{GREEN}Sin nodos en riesgo{RESET}")
+    if not found:
 
-    return lines
+        print(f"{GREEN}Sin nodos en riesgo{RESET}")
 
-
-def print_two_column_panels(left,right,width=70):
-
-    top=f"{ORANGE}╔{'═'*width}╗{RESET}"
-
-    print(top+"   "+top)
-
-    rows=max(len(left),len(right))
-
-    left+=[""]*(rows-len(left))
-    right+=[""]*(rows-len(right))
-
-    for l,r in zip(left,right):
-
-        print(f"{ORANGE}║{RESET}{l.ljust(width)}{ORANGE}║{RESET}   {ORANGE}║{RESET}{r.ljust(width)}{ORANGE}║{RESET}")
-
-    bottom=f"{ORANGE}╚{'═'*width}╝{RESET}"
-
-    print(bottom+"   "+bottom)
-
-
-def print_cluster_summary_with_side_panels(data,prev):
-
-    left=["RESUMEN CLUSTERS",""]
-
-    for cluster,nodes in data.items():
-
-        total=sum(r.encolados for r in nodes.values())
-
-        left.append(f"{cluster:<14} {fmt(total):>10}")
-
-    alerts=build_node_alert_lines(data)
-
-    risks=build_risk_nodes_lines(data,prev)
-
-    right=alerts+[""]+risks
-
-    print_two_column_panels(left,right)
+    print()
 
 
 # ---------------------------------------------------------
-# tablas
+# tables
 # ---------------------------------------------------------
 
 def print_queue_table(ts,data,prev):
-
-    cluster_sep=f" {orange_cluster_sep()} "
 
     print("ESTADO ENCOLADOS NODOS\n")
 
@@ -355,14 +295,12 @@ def print_queue_table(ts,data,prev):
 
                 sym="↑" if diff>0 else "↓" if diff<0 else "→"
 
-                row+=f"{cluster_sep}{fmt(prev_val)} {fmt(r.encolados)} {sym} {fmt(r.active_recips)}"
+                row+=f"  {fmt(prev_val)} {fmt(r.encolados)} {sym} {fmt(r.active_recips)}"
 
         print(row)
 
 
 def print_health_table(data):
-
-    cluster_sep=f" {orange_cluster_sep()} "
 
     print("\nSALUD OPERATIVA\n")
 
@@ -384,18 +322,20 @@ def print_health_table(data):
 
                     status="offline"
 
-                row+=f"{cluster_sep}{status} {r.cpu} {r.ram} {r.conn_out}"
+                row+=f"  {status} {r.cpu} {r.ram} {r.conn_out}"
 
         print(row)
 
 
 # ---------------------------------------------------------
-# incidencias
+# incidents
 # ---------------------------------------------------------
 
-def print_status_incidents(data):
+def print_incidents(data):
 
     print("\nINCIDENCIAS\n")
+
+    found=False
 
     for cluster,nodes in data.items():
 
@@ -405,33 +345,17 @@ def print_status_incidents(data):
 
                 print(f"{RED}{cluster} {nodo} sin respuesta{RESET}")
 
+                found=True
+
             elif r.status.lower()!="online":
 
                 print(f"{YELLOW}{cluster} {nodo} status={r.status}{RESET}")
 
+                found=True
 
-# ---------------------------------------------------------
-# análisis avanzado
-# ---------------------------------------------------------
+    if not found:
 
-def print_advanced_findings(data,prev):
-
-    print("\nANÁLISIS AVANZADO\n")
-
-    findings=[]
-
-    findings+=detect_queue_storm(data,prev)
-    findings+=detect_smtp_saturation(data)
-    findings+=detect_cluster_imbalance(data)
-
-    if not findings:
-
-        print(f"{GREEN}Sistema estable sin anomalías detectadas{RESET}")
-        return
-
-    for f in findings:
-
-        print(f"{YELLOW}{f}{RESET}")
+        print(f"{GREEN}Sin incidencias{RESET}")
 
 
 # ---------------------------------------------------------
@@ -483,32 +407,37 @@ def run_monitor(auth):
 
                     data[cluster]={r.nodo:r for r in results}
 
-            clear_screen()
+            clear()
 
             print("MONITOR ESA\n")
 
-            print_cluster_summary_with_side_panels(data,prev)
+            print_cluster_summary(data,prev)
 
-            print()
+            print_alerts(data)
+
+            print_risks(data,prev)
+
+            separator()
 
             print_queue_table(ts,data,prev)
 
+            separator()
+
             print_health_table(data)
 
-            print_status_incidents(data)
-
-            print_advanced_findings(data,prev)
+            print_incidents(data)
 
             prev={c:{n:r.encolados for n,r in m.items()} for c,m in data.items()}
 
-            for _ in range(REFRESH_SECONDS*10):
+            for _ in range(REFRESH*10):
 
                 if stop_event.is_set():
+
                     break
 
                 time.sleep(0.1)
 
-    clear_screen()
+    clear()
 
     print("Monitor detenido")
 
@@ -523,7 +452,7 @@ def main():
 
     auth=(creds["GLOBAL_USERNAME"],creds["GLOBAL_PASSWORD"])
 
-    clear_screen()
+    clear()
 
     run_monitor(auth)
 
