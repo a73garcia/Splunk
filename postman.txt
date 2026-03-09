@@ -34,37 +34,17 @@ CYAN = "\033[96m"
 RESET = "\033[0m"
 
 GROUPS = [
-    {"cluster": "Europa",       "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
-    {"cluster": "América",      "pattern": "https://dh5504-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
-    {"cluster": "Brasil",       "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status",      "start": 1, "end": 20},
-    {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
+    {"cluster": "Europa",       "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status"},
+    {"cluster": "América",      "pattern": "https://dh5504-esa{idx}.c3s2.iphmx.com/xml/status"},
+    {"cluster": "Brasil",       "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status"},
+    {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status"},
 ]
 
 CLUSTER_THRESHOLDS = {
-    "Europa": {
-        "warning": 50,
-        "critical": 100,
-        "total_warning": 200,
-        "total_critical": 300,
-    },
-    "América": {
-        "warning": 50,
-        "critical": 100,
-        "total_warning": 200,
-        "total_critical": 300,
-    },
-    "Brasil": {
-        "warning": 50,
-        "critical": 100,
-        "total_warning": 200,
-        "total_critical": 300,
-    },
-    "Aplicaciones": {
-        "warning": 20,
-        "critical": 40,
-        "total_warning": 80,
-        "total_critical": 120,
-    },
+    "Europa": {"warning": 50, "critical": 100, "total_warning": 200, "total_critical": 300},
+    "América": {"warning": 50, "critical": 100, "total_warning": 200, "total_critical": 300},
+    "Brasil": {"warning": 50, "critical": 100, "total_warning": 200, "total_critical": 300},
+    "Aplicaciones": {"warning": 20, "critical": 40, "total_warning": 80, "total_critical": 120},
 }
 
 ADV_THRESHOLDS = {
@@ -77,6 +57,12 @@ ADV_THRESHOLDS = {
     "growth_warning": 25,
     "growth_critical": 75,
     "active_recips_warning": 5000,
+    "smtp_low_conn_out": 5,
+    "smtp_high_conn_out": 35,
+    "imbalance_ratio_warning": 2.0,
+    "imbalance_ratio_critical": 3.0,
+    "stuck_min_queue": 100,
+    "stuck_cycles": 3,
 }
 
 stop_event = threading.Event()
@@ -154,7 +140,6 @@ def trend_symbol(prev: int, cur: int) -> str:
 
 def total_status_colored(cluster: str, total: int) -> str:
     th = CLUSTER_THRESHOLDS[cluster]
-
     if total >= th["total_critical"]:
         return f"{RED}{'CRITICAL':<8}{RESET}"
     if total >= th["total_warning"]:
@@ -162,9 +147,8 @@ def total_status_colored(cluster: str, total: int) -> str:
     return f"{GREEN}{'OK':^8}{RESET}"
 
 
-def print_orange_separator(width: int = 220) -> None:
-    line = "═" * width
-    print(f"{ORANGE}{line}{RESET}")
+def print_orange_separator(width: int = 235) -> None:
+    print(f"{ORANGE}{'═' * width}{RESET}")
 
 
 def orange_cluster_sep() -> str:
@@ -217,7 +201,7 @@ def health_score(r: Result, prev_queue: int) -> int:
     if r.active_recips >= ADV_THRESHOLDS["active_recips_warning"]:
         score -= 7
 
-    if r.error:
+    if r.error or str(r.status).lower() != "online":
         score = min(score, 20)
 
     return max(0, min(100, score))
@@ -236,47 +220,27 @@ def diagnose_node(r: Result, prev_queue: int) -> str:
 
     if r.error:
         return "Sin respuesta"
-    if r.status.lower() != "online":
-        return f"Status {r.status}"
-    if r.encolados >= 100 and r.conn_out <= 5:
+    if str(r.status).lower() != "online":
+        return f"Status={r.status}"
+    if r.encolados >= ADV_THRESHOLDS["stuck_min_queue"] and r.conn_out <= ADV_THRESHOLDS["smtp_low_conn_out"]:
         return "Queue sin salida"
-    if growth >= 75 and r.conn_out >= 20:
+    if growth >= ADV_THRESHOLDS["growth_critical"] and r.conn_out >= ADV_THRESHOLDS["smtp_high_conn_out"]:
         return "Queue creciendo"
-    if r.cpu >= 85:
+    if r.cpu >= ADV_THRESHOLDS["cpu_critical"]:
         return "CPU alta"
-    if r.ram >= 90:
+    if r.ram >= ADV_THRESHOLDS["ram_critical"]:
         return "RAM alta"
-    if r.conn_out >= 40:
+    if r.conn_out >= ADV_THRESHOLDS["conn_critical"]:
         return "Salida alta"
-    if r.active_recips >= 5000 and r.encolados >= 50:
+    if r.active_recips >= ADV_THRESHOLDS["active_recips_warning"] and r.encolados >= 50:
         return "Muchos recips"
     if r.encolados == 0 and r.conn_in == 0 and r.conn_out == 0:
         return "Sin actividad"
     return "OK"
 
 
-def status_incident_symbol(status: str, error: Optional[str]) -> str:
-    if error:
-        return f"{RED}!{RESET}"
-    if str(status).lower() != "online":
-        return f"{YELLOW}!{RESET}"
-    return " "
-
-
-def build_status_incidents(current_data: Dict[str, Dict[str, Result]]) -> List[Tuple[str, str, str]]:
-    incidents: List[Tuple[str, str, str]] = []
-    for cluster, nodo_map in current_data.items():
-        for nodo, r in nodo_map.items():
-            if r.error:
-                incidents.append((cluster, nodo, "Sin respuesta"))
-            elif str(r.status).lower() != "online":
-                incidents.append((cluster, nodo, f"Status={r.status}"))
-    incidents.sort(key=lambda x: (x[0], x[1]))
-    return incidents
-
-
 # =========================================================
-# ESC LISTENER (WINDOWS)
+# ESC LISTENER
 # =========================================================
 def esc_listener() -> None:
     while not stop_event.is_set():
@@ -294,7 +258,7 @@ def esc_listener() -> None:
 def parse_status(xml_text: str) -> Tuple[str, Dict[str, int]]:
     root = ET.fromstring(xml_text)
 
-    system_status = "No disponible"
+    system_status = "unknown"
     sys_node = root.find(".//system")
     if sys_node is not None:
         system_status = sys_node.attrib.get("status", system_status)
@@ -341,9 +305,10 @@ def fetch_one(
             )
 
             if r.status_code != 200:
-                return Result(timestamp, nodo, cluster, "ERR", 0, 0, 0, 0, 0, 0, f"HTTP {r.status_code}")
+                return Result(timestamp, nodo, cluster, "offline", 0, 0, 0, 0, 0, 0, f"HTTP {r.status_code}")
 
             status, m = parse_status(r.text)
+
             return Result(
                 timestamp=timestamp,
                 nodo=nodo,
@@ -361,7 +326,7 @@ def fetch_one(
         except requests.exceptions.RequestException as e:
             last_err = str(e)
 
-    return Result(timestamp, nodo, cluster, "ERR", 0, 0, 0, 0, 0, 0, last_err or "RequestException")
+    return Result(timestamp, nodo, cluster, "offline", 0, 0, 0, 0, 0, 0, last_err or "RequestException")
 
 
 def fetch_cluster(
@@ -372,14 +337,12 @@ def fetch_cluster(
 ) -> List[Result]:
     cluster = group["cluster"]
     pattern = group["pattern"]
-    start = int(group["start"])
-    end = int(group["end"])
 
     results: List[Result] = []
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         futures = [
             ex.submit(fetch_one, session, pattern.format(idx=i), auth, timestamp, cluster, i)
-            for i in range(start, end + 1)
+            for i in range(1, 21)
         ]
         for fut in as_completed(futures):
             results.append(fut.result())
@@ -388,7 +351,136 @@ def fetch_cluster(
 
 
 # =========================================================
-# PANELES
+# DETECCIONES AVANZADAS
+# =========================================================
+def build_status_incidents(current_data: Dict[str, Dict[str, Result]]) -> List[Tuple[str, str, str]]:
+    incidents: List[Tuple[str, str, str]] = []
+
+    for cluster, nodo_map in current_data.items():
+        for nodo, r in nodo_map.items():
+            if r.error:
+                incidents.append((cluster, nodo, "Sin respuesta"))
+            elif str(r.status).lower() != "online":
+                incidents.append((cluster, nodo, f"Status={r.status}"))
+
+    incidents.sort(key=lambda x: (x[0], x[1]))
+    return incidents
+
+
+def detect_mail_backlog_real(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
+    findings = []
+
+    for cluster, nodo_map in current_data.items():
+        total_queue = sum(r.encolados for r in nodo_map.values())
+        total_out = sum(r.conn_out for r in nodo_map.values())
+
+        th = CLUSTER_THRESHOLDS[cluster]
+        if total_queue >= th["total_warning"] and total_out <= len(nodo_map) * ADV_THRESHOLDS["smtp_low_conn_out"]:
+            findings.append(f"{cluster}: backlog real (cola={fmt_num_dot(total_queue)}, conn_out={fmt_num_dot(total_out)})")
+
+    return findings
+
+
+def detect_smtp_saturation(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
+    findings = []
+
+    for cluster, nodo_map in current_data.items():
+        for nodo, r in nodo_map.items():
+            if r.conn_out >= ADV_THRESHOLDS["conn_critical"] and r.cpu >= ADV_THRESHOLDS["cpu_warning"]:
+                findings.append(f"{cluster} {nodo}: saturación SMTP (CO={fmt_num_dot(r.conn_out)}, CPU={r.cpu})")
+            elif r.conn_out >= ADV_THRESHOLDS["conn_critical"] and r.ram >= ADV_THRESHOLDS["ram_warning"]:
+                findings.append(f"{cluster} {nodo}: salida alta con RAM elevada (CO={fmt_num_dot(r.conn_out)}, RAM={r.ram})")
+
+    return findings
+
+
+def detect_cluster_imbalance(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
+    findings = []
+
+    for cluster, nodo_map in current_data.items():
+        queues = [r.encolados for r in nodo_map.values()]
+        if not queues:
+            continue
+
+        max_q = max(queues)
+        min_q = min(queues)
+        avg_q = sum(queues) / len(queues)
+
+        if avg_q <= 0:
+            continue
+
+        ratio = max_q / max(avg_q, 1)
+
+        if ratio >= ADV_THRESHOLDS["imbalance_ratio_critical"]:
+            findings.append(f"{cluster}: desbalanceado crítico (máx={fmt_num_dot(max_q)}, media={fmt_num_dot(int(avg_q))})")
+        elif ratio >= ADV_THRESHOLDS["imbalance_ratio_warning"]:
+            findings.append(f"{cluster}: desbalanceado (máx={fmt_num_dot(max_q)}, media={fmt_num_dot(int(avg_q))})")
+
+        if max_q > 0 and min_q == 0:
+            findings.append(f"{cluster}: nodos vacíos y nodos cargados a la vez")
+
+    return findings
+
+
+def detect_queue_storm(
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+) -> List[str]:
+    findings = []
+
+    for cluster, nodo_map in current_data.items():
+        for nodo, r in nodo_map.items():
+            prev_q = previous_data.get(cluster, {}).get(nodo, r.encolados)
+            growth = r.encolados - prev_q
+
+            if growth >= ADV_THRESHOLDS["growth_critical"]:
+                findings.append(f"{cluster} {nodo}: queue storm +{fmt_num_dot(growth)}")
+            elif growth >= ADV_THRESHOLDS["growth_warning"] and r.conn_out <= ADV_THRESHOLDS["smtp_low_conn_out"]:
+                findings.append(f"{cluster} {nodo}: cola subiendo sin salida +{fmt_num_dot(growth)}")
+
+    return findings
+
+
+def detect_stuck_nodes(history: Dict[str, Dict[str, List[int]]]) -> List[str]:
+    findings = []
+
+    for cluster, nodo_map in history.items():
+        for nodo, series in nodo_map.items():
+            if len(series) < ADV_THRESHOLDS["stuck_cycles"]:
+                continue
+
+            tail = series[-ADV_THRESHOLDS["stuck_cycles"]:]
+            if len(set(tail)) == 1 and tail[-1] >= ADV_THRESHOLDS["stuck_min_queue"]:
+                findings.append(f"{cluster} {nodo}: nodo stuck (cola fija={fmt_num_dot(tail[-1])})")
+
+    return findings
+
+
+def build_advanced_findings(
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+    history: Dict[str, Dict[str, List[int]]],
+) -> List[str]:
+    findings: List[str] = []
+
+    findings.extend(detect_mail_backlog_real(current_data))
+    findings.extend(detect_smtp_saturation(current_data))
+    findings.extend(detect_cluster_imbalance(current_data))
+    findings.extend(detect_queue_storm(current_data, previous_data))
+    findings.extend(detect_stuck_nodes(history))
+
+    dedup: List[str] = []
+    seen = set()
+    for item in findings:
+        if item not in seen:
+            seen.add(item)
+            dedup.append(item)
+
+    return dedup
+
+
+# =========================================================
+# PANELES SUPERIORES
 # =========================================================
 def build_node_alert_lines(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
     alerts = []
@@ -426,7 +518,6 @@ def build_risk_nodes_lines(
         for r in cluster_map.values():
             prev_q = previous_data.get(r.cluster, {}).get(r.nodo, r.encolados)
             diag = diagnose_node(r, prev_q)
-
             if diag != "OK":
                 findings.append((r.nodo, r.cluster, diag))
 
@@ -511,6 +602,9 @@ def print_cluster_summary_with_side_panels(
     print_two_column_panels(summary_lines, right_lines, left_width=66)
 
 
+# =========================================================
+# TABLAS
+# =========================================================
 def print_queue_table(
     timestamp: str,
     current_data: Dict[str, Dict[str, Result]],
@@ -649,7 +743,6 @@ def print_node_health_table(
     cluster_sep_colored = f" {orange_cluster_sep()} "
 
     cluster_chunk_width = (
-        1 + len(col_sep) +
         st_w + len(col_sep) +
         cpu_w + len(col_sep) +
         ram_w + len(col_sep) +
@@ -660,10 +753,8 @@ def print_node_health_table(
 
     def fmt_chunk(r: Optional[Result], prev_q: int) -> str:
         if r is None:
-            sym_txt = " "
             return (
-                f"{sym_txt}{col_sep}"
-                f"{'N/A'.rjust(st_w)}{col_sep}"
+                f"{'offline'.rjust(st_w)}{col_sep}"
                 f"{'0'.rjust(cpu_w)}{col_sep}"
                 f"{'0'.rjust(ram_w)}{col_sep}"
                 f"{'0'.rjust(ci_w)}{col_sep}"
@@ -671,8 +762,7 @@ def print_node_health_table(
                 f"{'0'.rjust(hs_w)}"
             )
 
-        sym_txt = status_incident_symbol(r.status, r.error)
-        status_txt = str(r.status)[:st_w].rjust(st_w)
+        status_txt = ("offline" if r.error or str(r.status).lower() != "online" else "online").rjust(st_w)
 
         cpu_txt = color_by_threshold(
             str(r.cpu).rjust(cpu_w),
@@ -704,13 +794,8 @@ def print_node_health_table(
 
         if r.error:
             status_txt = f"{RED}{status_txt}{RESET}"
-            cpu_txt = f"{RED}{str(r.cpu).rjust(cpu_w)}{RESET}"
-            ram_txt = f"{RED}{str(r.ram).rjust(ram_w)}{RESET}"
-            ci_txt = f"{RED}{fmt_num_dot(r.conn_in).rjust(ci_w)}{RESET}"
-            co_txt = f"{RED}{fmt_num_dot(r.conn_out).rjust(co_w)}{RESET}"
 
         return (
-            f"{sym_txt}{col_sep}"
             f"{status_txt}{col_sep}"
             f"{cpu_txt}{col_sep}"
             f"{ram_txt}{col_sep}"
@@ -728,7 +813,6 @@ def print_node_health_table(
     )
 
     sub = (
-        f"{'!'.center(1)}{col_sep}"
         f"{'Status'.center(st_w)}{col_sep}"
         f"{'CPU'.center(cpu_w)}{col_sep}"
         f"{'RAM'.center(ram_w)}{col_sep}"
@@ -770,15 +854,33 @@ def print_node_health_table(
 def print_status_incidents(current_data: Dict[str, Dict[str, Result]]) -> None:
     incidents = build_status_incidents(current_data)
 
-    print("INCIDENCIAS DE STATUS\n")
+    print("INCIDENCIAS\n")
 
     if not incidents:
-        print(f"{GREEN}OK - Sin incidencias de status{RESET}")
+        print(f"{GREEN}OK - Sin incidencias{RESET}")
         return
 
-    for cluster, nodo, incidencia in incidents:
-        color = RED if incidencia == "Sin respuesta" else YELLOW
-        print(f"{color}{cluster} {nodo} → {incidencia}{RESET}")
+    for cluster, nodo, msg in incidents:
+        color = RED if msg == "Sin respuesta" else YELLOW
+        print(f"{color}{cluster} {nodo} → {msg}{RESET}")
+
+
+def print_advanced_findings(
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+    history: Dict[str, Dict[str, List[int]]],
+) -> None:
+    findings = build_advanced_findings(current_data, previous_data, history)
+
+    print("ANÁLISIS AVANZADO\n")
+
+    if not findings:
+        print(f"{GREEN}OK - Sin hallazgos avanzados{RESET}")
+        return
+
+    for item in findings[:20]:
+        color = RED if any(k in item.lower() for k in ["crítico", "storm", "stuck", "backlog real"]) else YELLOW
+        print(f"{color}{item}{RESET}")
 
 
 # =========================================================
@@ -786,6 +888,7 @@ def print_status_incidents(current_data: Dict[str, Dict[str, Result]]) -> None:
 # =========================================================
 def run_monitor(auth: Tuple[str, str]) -> None:
     previous_data: Dict[str, Dict[str, int]] = {}
+    queue_history: Dict[str, Dict[str, List[int]]] = {}
 
     listener = threading.Thread(target=esc_listener, daemon=True)
     listener.start()
@@ -806,6 +909,12 @@ def run_monitor(auth: Tuple[str, str]) -> None:
                     results = fut.result()
                     current_data[cluster] = {r.nodo: r for r in results}
 
+            for cluster, nodo_map in current_data.items():
+                queue_history.setdefault(cluster, {})
+                for nodo, r in nodo_map.items():
+                    queue_history[cluster].setdefault(nodo, []).append(r.encolados)
+                    queue_history[cluster][nodo] = queue_history[cluster][nodo][-5:]
+
             clear_screen()
             print("MONITOR COLAS ESA\n")
             print_cluster_summary_with_side_panels(current_data, previous_data)
@@ -821,6 +930,10 @@ def run_monitor(auth: Tuple[str, str]) -> None:
             print_orange_separator()
             print()
             print_status_incidents(current_data)
+            print()
+            print_orange_separator()
+            print()
+            print_advanced_findings(current_data, previous_data, queue_history)
 
             print("\nPulsa ESC para salir")
 
