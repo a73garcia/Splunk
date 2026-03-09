@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import os
+import re
 import time
 import threading
 import msvcrt
@@ -30,8 +31,9 @@ RED = "\033[91m"
 YELLOW = "\033[93m"
 GREEN = "\033[92m"
 ORANGE = "\033[38;5;208m"
-CYAN = "\033[96m"
 RESET = "\033[0m"
+
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 GROUPS = [
     {"cluster": "Europa",       "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
@@ -168,8 +170,7 @@ def total_status_colored(cluster: str, total: int) -> str:
 
 
 def print_orange_separator(width: int = 220) -> None:
-    line = "═" * width
-    print(f"{ORANGE}{line}{RESET}")
+    print(f"{ORANGE}{'═' * width}{RESET}")
 
 
 def orange_cluster_sep() -> str:
@@ -260,8 +261,28 @@ def diagnose_node(r: Result, prev_queue: int) -> str:
     return "OK"
 
 
+def strip_ansi(text: str) -> str:
+    return ANSI_RE.sub("", text)
+
+
+def visible_len(text: str) -> int:
+    return len(strip_ansi(text))
+
+
+def ansi_ljust(text: str, width: int) -> str:
+    pad = max(0, width - visible_len(text))
+    return text + (" " * pad)
+
+
+def ansi_truncate(text: str, width: int) -> str:
+    plain = strip_ansi(text)
+    if len(plain) <= width:
+        return text
+    return plain[:width]
+
+
 # =========================================================
-# ESC LISTENER (WINDOWS)
+# ESC LISTENER
 # =========================================================
 def esc_listener() -> None:
     while not stop_event.is_set():
@@ -372,7 +393,7 @@ def fetch_cluster(
 
 
 # =========================================================
-# DETECCIONES AVANZADAS
+# DETECCIONES
 # =========================================================
 def build_status_incidents(current_data: Dict[str, Dict[str, Result]]) -> List[Tuple[str, str, str]]:
     incidents: List[Tuple[str, str, str]] = []
@@ -602,8 +623,8 @@ def print_two_column_panels(left_lines: List[str], right_lines: List[str], left_
     print(f"{top_left}{mid_gap}{top_right}")
 
     for l, r in zip(left, right):
-        ltxt = l[:inner_left].ljust(inner_left)
-        rtxt = r[:inner_right].ljust(inner_right)
+        ltxt = ansi_ljust(ansi_truncate(l, inner_left), inner_left)
+        rtxt = ansi_ljust(ansi_truncate(r, inner_right), inner_right)
         print(
             f"{ORANGE}║{RESET}{ltxt}{ORANGE}║{RESET}"
             f"{mid_gap}"
@@ -932,7 +953,8 @@ def print_advanced_findings(
     lines = build_advanced_findings(current_data, previous_data, history)
 
     print("ANÁLISIS AVANZADO\n")
-    for line in lines[2:] if len(lines) > 2 and lines[0] == "ANÁLISIS AVANZADO" else lines:
+    body = lines[2:] if len(lines) > 2 and lines[0] == "ANÁLISIS AVANZADO" else lines
+    for line in body:
         print(line)
 
 
