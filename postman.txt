@@ -276,29 +276,33 @@ def diagnose_node(r: Result, prev_queue: int) -> str:
 
 def natural_alert_text(cluster: str, nodo: str, r: Result, severity: str) -> str:
     qty = fmt_num_dot(r.encolados)
-    if severity == "error":
-        return f"No hay respuesta del nodo {nodo} de {cluster}"
-    if severity == "critical":
-        return f"El nodo {nodo} de {cluster} tiene {qty} correos encolados"
-    return f"El nodo {nodo} de {cluster} acumula {qty} correos encolados"
 
+    if severity == "error":
+        return f"{nodo} de {cluster} sin respuesta"
+
+    if severity == "critical":
+        return f"{nodo} de {cluster} tiene {qty} correos en cola"
+
+    return f"{nodo} de {cluster} con {qty} correos en cola"
 
 def natural_risk_text(cluster: str, nodo: str, diag: str) -> str:
+
     mapping = {
-        "Sin respuesta": f"No hay respuesta del nodo {nodo} de {cluster}",
-        "Salida alta": f"Las conexiones salientes están altas en {nodo} de {cluster}",
-        "CPU alta": f"La CPU está alta en {nodo} de {cluster}",
-        "RAM alta": f"La memoria RAM está alta en {nodo} de {cluster}",
-        "Queue sin salida": f"La cola no está saliendo en {nodo} de {cluster}",
-        "Queue creciendo": f"La cola está creciendo en {nodo} de {cluster}",
-        "Muchos recips": f"Hay muchos destinatarios activos en {nodo} de {cluster}",
-        "Sin actividad": f"No se detecta actividad en {nodo} de {cluster}",
+        "Sin respuesta": f"{nodo} de {cluster} sin respuesta",
+        "Salida alta": f"Salida SMTP alta en {nodo} ({cluster})",
+        "CPU alta": f"CPU alta en {nodo} ({cluster})",
+        "RAM alta": f"RAM alta en {nodo} ({cluster})",
+        "Queue sin salida": f"Cola sin salida en {nodo} ({cluster})",
+        "Queue creciendo": f"Cola creciendo en {nodo} ({cluster})",
+        "Muchos recips": f"Muchos destinatarios en {nodo} ({cluster})",
+        "Sin actividad": f"Sin actividad en {nodo} ({cluster})",
     }
+
     if diag.startswith("Status="):
         status = diag.split("=", 1)[1]
-        return f"El estado del nodo {nodo} de {cluster} es {status}"
-    return mapping.get(diag, f"Se detecta {diag.lower()} en {nodo} de {cluster}")
+        return f"{nodo} de {cluster} status {status}"
 
+    return mapping.get(diag, f"{diag} en {nodo} ({cluster})")
 
 # =========================================================
 # ESC LISTENER
