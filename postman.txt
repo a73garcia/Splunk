@@ -161,7 +161,7 @@ def total_status_colored(cluster: str, total: int) -> str:
     return f"{GREEN}{'OK':^8}{RESET}"
 
 
-def print_orange_separator(width: int = 190) -> None:
+def print_orange_separator(width: int = 220) -> None:
     line = "═" * width
     print(f"{ORANGE}{line}{RESET}")
 
@@ -448,23 +448,26 @@ def print_queue_table(
     ant_w = 9
     act_w = 9
     var_w = 5
+    ac_w = 8
 
     col_sep = " | "
     cluster_sep_plain = " || "
     cluster_sep_colored = f" {orange_cluster_sep()} "
-    cluster_chunk_width = ant_w + len(col_sep) + act_w + len(col_sep) + var_w
+    cluster_chunk_width = ant_w + len(col_sep) + act_w + len(col_sep) + var_w + len(col_sep) + ac_w
 
-    def fmt_chunk(prev_val: int, cur_val: int, var_val: str, cluster: str, has_error: bool) -> str:
+    def fmt_chunk(prev_val: int, cur_val: int, var_val: str, ac_val: int, cluster: str, has_error: bool) -> str:
         ant_txt = fmt_num_dot(prev_val).rjust(ant_w)
         q_txt = queue_color(cluster, fmt_num_dot(cur_val).rjust(act_w), cur_val)
         var_txt = var_val.center(var_w)
+        ac_txt = fmt_num_dot(ac_val).rjust(ac_w)
 
         if has_error:
             ant_txt = f"{RED}{ant_txt}{RESET}"
             q_txt = f"{RED}{fmt_num_dot(cur_val).rjust(act_w)}{RESET}"
             var_txt = f"{RED}{var_txt}{RESET}"
+            ac_txt = f"{RED}{fmt_num_dot(ac_val).rjust(ac_w)}{RESET}"
 
-        return f"{ant_txt}{col_sep}{q_txt}{col_sep}{var_txt}"
+        return f"{ant_txt}{col_sep}{q_txt}{col_sep}{var_txt}{col_sep}{ac_txt}"
 
     h1 = (
         f"| {'Hora'.ljust(ts_width)} | {'Nodo'.ljust(nodo_width)}"
@@ -477,7 +480,8 @@ def print_queue_table(
     sub = (
         f"{'Anterior'.center(ant_w)}{col_sep}"
         f"{'Encolados'.center(act_w)}{col_sep}"
-        f"{'Var'.center(var_w)}"
+        f"{'Var'.center(var_w)}{col_sep}"
+        f"{'AC'.center(ac_w)}"
     )
 
     h2 = (
@@ -506,11 +510,12 @@ def print_queue_table(
 
             r = cur_map.get(nodo)
             cur_val = r.encolados if r else 0
+            ac_val = r.active_recips if r else 0
             prev_val = prev_map.get(nodo, cur_val)
             var = trend_symbol(prev_val, cur_val)
             has_error = bool(r.error) if r else False
 
-            chunk = fmt_chunk(prev_val, cur_val, var, cluster, has_error)
+            chunk = fmt_chunk(prev_val, cur_val, var, ac_val, cluster, has_error)
             line += f"{cluster_sep_colored}{chunk}"
 
         line += " |"
@@ -529,13 +534,15 @@ def print_queue_table(
             prev_map.get(n, cur_map.get(n).encolados if cur_map.get(n) else 0)
             for n in nodos
         )
+        total_ac = sum(r.active_recips for r in cur_map.values())
         var = trend_symbol(total_prev, total_cur)
 
         ant_txt = fmt_num_dot(total_prev).rjust(ant_w)
         q_txt = queue_color(cluster, fmt_num_dot(total_cur).rjust(act_w), total_cur)
         var_txt = var.center(var_w)
+        ac_txt = fmt_num_dot(total_ac).rjust(ac_w)
 
-        chunk = f"{ant_txt}{col_sep}{q_txt}{col_sep}{var_txt}"
+        chunk = f"{ant_txt}{col_sep}{q_txt}{col_sep}{var_txt}{col_sep}{ac_txt}"
         total_line += f"{cluster_sep_colored}{chunk}"
 
     total_line += " |"
@@ -552,11 +559,11 @@ def print_node_health_table(
     nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
     nodo_w = 6
+    st_w = 8
     cpu_w = 3
     ram_w = 3
     ci_w = 5
     co_w = 5
-    ac_w = 6
     hs_w = 3
 
     col_sep = " | "
@@ -564,25 +571,26 @@ def print_node_health_table(
     cluster_sep_colored = f" {orange_cluster_sep()} "
 
     cluster_chunk_width = (
+        st_w + len(col_sep) +
         cpu_w + len(col_sep) +
         ram_w + len(col_sep) +
         ci_w + len(col_sep) +
         co_w + len(col_sep) +
-        ac_w + len(col_sep) +
         hs_w
     )
 
     def fmt_chunk(r: Optional[Result], prev_q: int) -> str:
         if r is None:
             return (
+                f"{'N/A'.rjust(st_w)}{col_sep}"
                 f"{'0'.rjust(cpu_w)}{col_sep}"
                 f"{'0'.rjust(ram_w)}{col_sep}"
                 f"{'0'.rjust(ci_w)}{col_sep}"
                 f"{'0'.rjust(co_w)}{col_sep}"
-                f"{'0'.rjust(ac_w)}{col_sep}"
                 f"{'0'.rjust(hs_w)}"
             )
 
+        status_txt = r.status[:st_w].rjust(st_w)
         cpu_txt = color_by_threshold(
             str(r.cpu).rjust(cpu_w),
             r.cpu,
@@ -611,24 +619,22 @@ def print_node_health_table(
             ADV_THRESHOLDS["conn_critical"],
         )
 
-        ac_txt = fmt_num_dot(r.active_recips).rjust(ac_w)
-
         score = health_score(r, prev_q)
         hs_txt = health_color(str(score).rjust(hs_w), score)
 
         if r.error:
+            status_txt = f"{RED}{status_txt}{RESET}"
             cpu_txt = f"{RED}{str(r.cpu).rjust(cpu_w)}{RESET}"
             ram_txt = f"{RED}{str(r.ram).rjust(ram_w)}{RESET}"
             ci_txt = f"{RED}{fmt_num_dot(r.conn_in).rjust(ci_w)}{RESET}"
             co_txt = f"{RED}{fmt_num_dot(r.conn_out).rjust(co_w)}{RESET}"
-            ac_txt = f"{RED}{fmt_num_dot(r.active_recips).rjust(ac_w)}{RESET}"
 
         return (
+            f"{status_txt}{col_sep}"
             f"{cpu_txt}{col_sep}"
             f"{ram_txt}{col_sep}"
             f"{ci_txt}{col_sep}"
             f"{co_txt}{col_sep}"
-            f"{ac_txt}{col_sep}"
             f"{hs_txt}"
         )
 
@@ -641,11 +647,11 @@ def print_node_health_table(
     )
 
     sub = (
+        f"{'Status'.center(st_w)}{col_sep}"
         f"{'CPU'.center(cpu_w)}{col_sep}"
         f"{'RAM'.center(ram_w)}{col_sep}"
         f"{'CI'.center(ci_w)}{col_sep}"
         f"{'CO'.center(co_w)}{col_sep}"
-        f"{'AC'.center(ac_w)}{col_sep}"
         f"{'HS'.center(hs_w)}"
     )
 
