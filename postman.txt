@@ -2,9 +2,11 @@
 # -*- coding: utf-8 -*-
 
 import os
+import sys
 import time
 import threading
 import msvcrt
+from io import StringIO
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Tuple
 from datetime import datetime
@@ -86,7 +88,24 @@ class Result:
 # HELPERS
 # =========================================================
 def clear_screen() -> None:
-    os.system("cls")
+    try:
+        sys.stdout.write("\033[2J\033[3J\033[H")
+        sys.stdout.flush()
+    except Exception:
+        os.system("cls")
+
+
+def render_screen(render_fn) -> None:
+    old_stdout = sys.stdout
+    buffer = StringIO()
+    sys.stdout = buffer
+    try:
+        render_fn()
+    finally:
+        sys.stdout = old_stdout
+
+    clear_screen()
+    print(buffer.getvalue(), end="", flush=True)
 
 
 def load_env_file(path: str) -> Dict[str, str]:
@@ -910,32 +929,34 @@ def run_monitor(auth: Tuple[str, str]) -> None:
                     queue_history[cluster].setdefault(nodo, []).append(r.encolados)
                     queue_history[cluster][nodo] = queue_history[cluster][nodo][-5:]
 
-            clear_screen()
-            print("MONITOR COLAS ESA\n")
+            def draw():
+                print("MONITOR COLAS ESA\n")
 
-            print_cluster_summary(current_data, previous_data)
-            print_alerts_and_risks(current_data, previous_data)
+                print_cluster_summary(current_data, previous_data)
+                print_alerts_and_risks(current_data, previous_data)
 
-            print_orange_separator()
-            print()
-            print_queue_table(timestamp, current_data, previous_data)
+                print_orange_separator()
+                print()
+                print_queue_table(timestamp, current_data, previous_data)
 
-            print()
-            print_orange_separator()
-            print()
-            print_node_health_table(current_data, previous_data)
+                print()
+                print_orange_separator()
+                print()
+                print_node_health_table(current_data, previous_data)
 
-            print()
-            print_orange_separator()
-            print()
-            print_status_incidents(current_data)
+                print()
+                print_orange_separator()
+                print()
+                print_status_incidents(current_data)
 
-            print()
-            print_orange_separator()
-            print()
-            print_advanced_findings(current_data, previous_data, queue_history)
+                print()
+                print_orange_separator()
+                print()
+                print_advanced_findings(current_data, previous_data, queue_history)
 
-            print("\nPulsa ESC para salir")
+                print("\nPulsa ESC para salir")
+
+            render_screen(draw)
 
             previous_data = {
                 c: {n: r.encolados for n, r in m.items()}
