@@ -545,7 +545,7 @@ def print_node_health_table(
     ram_w = 5
     ci_w = 6
     co_w = 6
-    ar_w = 8
+    ar_w = 10
     hs_w = 6
 
     col_sep = " | "
@@ -577,24 +577,28 @@ def print_node_health_table(
             ADV_THRESHOLDS["cpu_warning"],
             ADV_THRESHOLDS["cpu_critical"],
         )
+
         ram_txt = color_by_threshold(
             str(r.ram).rjust(ram_w),
             r.ram,
             ADV_THRESHOLDS["ram_warning"],
             ADV_THRESHOLDS["ram_critical"],
         )
+
         ci_txt = color_by_threshold(
             fmt_num_dot(r.conn_in).rjust(ci_w),
             r.conn_in,
             ADV_THRESHOLDS["conn_warning"],
             ADV_THRESHOLDS["conn_critical"],
         )
+
         co_txt = color_by_threshold(
             fmt_num_dot(r.conn_out).rjust(co_w),
             r.conn_out,
             ADV_THRESHOLDS["conn_warning"],
             ADV_THRESHOLDS["conn_critical"],
         )
+
         ar_txt = fmt_num_dot(r.active_recips).rjust(ar_w)
 
         score = health_score(r, prev_q)
@@ -607,7 +611,14 @@ def print_node_health_table(
             co_txt = f"{RED}{fmt_num_dot(r.conn_out).rjust(co_w)}{RESET}"
             ar_txt = f"{RED}{fmt_num_dot(r.active_recips).rjust(ar_w)}{RESET}"
 
-        return f"{cpu_txt}{col_sep}{ram_txt}{col_sep}{ci_txt}{col_sep}{co_txt}{col_sep}{ar_txt}{col_sep}{hs_txt}"
+        return (
+            f"{cpu_txt}{col_sep}"
+            f"{ram_txt}{col_sep}"
+            f"{ci_txt}{col_sep}"
+            f"{co_txt}{col_sep}"
+            f"{ar_txt}{col_sep}"
+            f"{hs_txt}"
+        )
 
     h1 = (
         f"| {'Nodo'.ljust(nodo_w)}{cluster_sep}"
@@ -622,7 +633,7 @@ def print_node_health_table(
         f"{'RAM'.center(ram_w)}{col_sep}"
         f"{'CI'.center(ci_w)}{col_sep}"
         f"{'CO'.center(co_w)}{col_sep}"
-        f"{'Recips'.center(ar_w)}{col_sep}"
+        f"{'ActiveRec'.center(ar_w)}{col_sep}"
         f"{'HS'.center(hs_w)}"
     )
 
@@ -685,25 +696,27 @@ def build_risk_nodes_lines(
     for cluster_map in current_data.values():
         for r in cluster_map.values():
             prev_q = previous_data.get(r.cluster, {}).get(r.nodo, r.encolados)
-            growth = r.encolados - prev_q
             diag = diagnose_node(r, prev_q)
 
             if diag != "OK":
-                findings.append((r.nodo, r.cluster, diag, growth, r.cpu, r.ram, r.conn_out))
+                findings.append((r.nodo, r.cluster, diag))
 
     if not findings:
         lines.append(f"{GREEN}OK - Sin nodos en riesgo{RESET}")
         return lines
 
-    findings = sorted(findings, key=lambda x: (x[2] != "ERROR", -x[3], -x[4], -x[5]))
+    dedup = []
+    seen = set()
+    for item in findings:
+        if item not in seen:
+            seen.add(item)
+            dedup.append(item)
 
-    for nodo, cluster, diag, growth, cpu, ram, conn_out in findings[:12]:
+    for nodo, cluster, diag in dedup[:12]:
         if diag == "ERROR":
             lines.append(f"{RED}{nodo} {cluster}: {diag}{RESET}")
-        elif diag in ("CPU alta", "RAM alta", "Queue sin salida", "Queue creciendo", "Salida alta", "Muchos recips"):
-            lines.append(f"{YELLOW}{nodo} {cluster}: {diag}{RESET}")
         else:
-            lines.append(f"{nodo} {cluster}: {diag}")
+            lines.append(f"{YELLOW}{nodo} {cluster}: {diag}{RESET}")
 
     return lines
 
