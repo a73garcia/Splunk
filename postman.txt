@@ -38,7 +38,7 @@ RESET = "\033[0m"
 
 GROUPS = [
     {"cluster": "Europa",       "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status"},
-    {"cluster": "América",      "pattern": "https://dh5504-esa{idx}.c3s2.iphmx.com/xml/status"},
+    {"cluster": "América",      "pattern": "https://dh5504-esa{idx}.iphmx.com/xml/status"},
     {"cluster": "Brasil",       "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status"},
     {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status"},
 ]
