@@ -1,21 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-def colorize_node(text: str, cluster: str, current: int, has_error: bool = False) -> str:
-    if has_error:
-        return text
-
-    th = CLUSTER_THRESHOLDS[cluster]
-
-    if current >= th["critical"]:
-        return f"{RED}{text}{RESET}"
-    if current >= th["warning"]:
-        return f"{YELLOW}{text}{RESET}"
-
-    return text
-
-
-
 import os
 import time
 import threading
@@ -30,9 +15,6 @@ import requests
 import urllib3
 
 
-# =========================================================
-# CONFIG
-# =========================================================
 CREDENTIALS_FILE = "credentials.env"
 
 TIMEOUT_SECONDS = 12
@@ -44,11 +26,9 @@ VERIFY_SSL = False
 if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# Colores
 RED = "\033[91m"
 YELLOW = "\033[93m"
 GREEN = "\033[92m"
-CYAN = "\033[96m"
 ORANGE = "\033[38;5;208m"
 RESET = "\033[0m"
 
@@ -59,7 +39,6 @@ GROUPS = [
     {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
 ]
 
-# Umbrales por cluster
 CLUSTER_THRESHOLDS = {
     "Europa": {
         "warning": 50,
@@ -87,10 +66,7 @@ CLUSTER_THRESHOLDS = {
     },
 }
 
-# Umbrales operativos para la vista avanzada
 ADV_THRESHOLDS = {
-    "queue_warning": 50,
-    "queue_critical": 100,
     "cpu_warning": 70,
     "cpu_critical": 85,
     "ram_warning": 75,
@@ -104,9 +80,6 @@ ADV_THRESHOLDS = {
 stop_event = threading.Event()
 
 
-# =========================================================
-# MODELOS
-# =========================================================
 @dataclass
 class Result:
     timestamp: str
@@ -175,8 +148,23 @@ def trend_symbol(prev: int, cur: int) -> str:
     return "→"
 
 
+def colorize_node(text: str, cluster: str, current: int, has_error: bool = False) -> str:
+    if has_error:
+        return f"{RED}{text}{RESET}"
+
+    th = CLUSTER_THRESHOLDS[cluster]
+
+    if current >= th["critical"]:
+        return f"{RED}{text}{RESET}"
+    if current >= th["warning"]:
+        return f"{YELLOW}{text}{RESET}"
+
+    return text
+
+
 def total_status_colored(cluster: str, total: int) -> str:
     th = CLUSTER_THRESHOLDS[cluster]
+
     if total >= th["total_critical"]:
         return f"{RED}{'CRITICAL':<8}{RESET}"
     if total >= th["total_warning"]:
@@ -187,16 +175,6 @@ def total_status_colored(cluster: str, total: int) -> str:
 def print_orange_separator(width: int = 170) -> None:
     line = "═" * width
     print(f"{ORANGE}{line}{RESET}")
-
-
-def esc_listener() -> None:
-    while not stop_event.is_set():
-        if msvcrt.kbhit():
-            key = msvcrt.getch()
-            if key == b"\x1b":
-                stop_event.set()
-                return
-        time.sleep(0.1)
 
 
 def color_by_threshold(text: str, value: int, warning: int, critical: int) -> str:
@@ -215,9 +193,9 @@ def queue_color(cluster: str, text: str, value: int) -> str:
 def health_score(r: Result, prev_queue: int) -> int:
     score = 100
 
-    if r.encolados >= ADV_THRESHOLDS["queue_critical"]:
+    if r.encolados >= CLUSTER_THRESHOLDS[r.cluster]["critical"]:
         score -= 35
-    elif r.encolados >= ADV_THRESHOLDS["queue_warning"]:
+    elif r.encolados >= CLUSTER_THRESHOLDS[r.cluster]["warning"]:
         score -= 20
 
     if r.cpu >= ADV_THRESHOLDS["cpu_critical"]:
@@ -249,7 +227,6 @@ def diagnose_node(r: Result, prev_queue: int) -> str:
 
     if r.error:
         return "ERROR"
-
     if r.encolados >= 100 and r.conn_out <= 5:
         return "Queue sin salida"
     if growth >= 75 and r.conn_out >= 20:
@@ -265,6 +242,19 @@ def diagnose_node(r: Result, prev_queue: int) -> str:
     if r.encolados == 0 and r.conn_in == 0 and r.conn_out == 0:
         return "Sin actividad"
     return "OK"
+
+
+# =========================================================
+# ESC LISTENER (WINDOWS)
+# =========================================================
+def esc_listener() -> None:
+    while not stop_event.is_set():
+        if msvcrt.kbhit():
+            key = msvcrt.getch()
+            if key == b"\x1b":
+                stop_event.set()
+                return
+        time.sleep(0.1)
 
 
 # =========================================================
@@ -443,7 +433,7 @@ def print_combined_table(
     cluster_order = ["Europa", "América", "Brasil", "Aplicaciones"]
     nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
-    ts_width = 8
+    ts_width = 5   # HH:SS
     nodo_width = 6
     ant_w = 9
     act_w = 9
@@ -668,7 +658,7 @@ def run_monitor(auth: Tuple[str, str]) -> None:
 
     with requests.Session() as session:
         while not stop_event.is_set():
-            timestamp = datetime.now().strftime("%H:%M:%S")
+            timestamp = datetime.now().strftime("%H:%S")
             current_data: Dict[str, Dict[str, Result]] = {}
 
             with ThreadPoolExecutor(max_workers=len(GROUPS)) as ex:
