@@ -99,6 +99,14 @@ CSV_HEADERS = [
     "error",
 ]
 
+ANSI_CODES = (
+    "\033[91m",
+    "\033[93m",
+    "\033[92m",
+    "\033[38;5;208m",
+    "\033[0m",
+)
+
 stop_event = threading.Event()
 
 
@@ -162,6 +170,29 @@ def render_screen(render_fn) -> None:
     print(buffer.getvalue(), end="", flush=True)
 
 
+def strip_ansi(text: str) -> str:
+    s = str(text)
+    for code in ANSI_CODES:
+        s = s.replace(code, "")
+    return s
+
+
+def ansi_center(text: str, width: int) -> str:
+    plain = strip_ansi(text)
+    if len(plain) >= width:
+        return text
+    left = (width - len(plain)) // 2
+    right = width - len(plain) - left
+    return (" " * left) + text + (" " * right)
+
+
+def ansi_rjust(text: str, width: int) -> str:
+    plain = strip_ansi(text)
+    if len(plain) >= width:
+        return text
+    return (" " * (width - len(plain))) + text
+
+
 def load_env_file(path: str) -> Dict[str, str]:
     data: Dict[str, str] = {}
     with open(path, "r", encoding="utf-8") as f:
@@ -220,6 +251,15 @@ def total_status_text(cluster: str, total: int) -> str:
     return "OK"
 
 
+def total_status_colored(cluster: str, total: int) -> str:
+    status = total_status_text(cluster, total)
+    if status == "CRITICAL":
+        return f"{RED}{status}{RESET}"
+    if status == "WARNING":
+        return f"{YELLOW}{status}{RESET}"
+    return f"{GREEN}{status}{RESET}"
+
+
 def print_orange_separator(width: int = 210) -> None:
     print(f"{ORANGE}{'═' * width}{RESET}")
 
@@ -249,16 +289,17 @@ def terminal_width(default: int = 180) -> int:
 
 
 def visible_text_len(text: str) -> int:
-    return len(str(text))
+    return len(strip_ansi(str(text)))
 
 
 def pad_or_trim(text: str, width: int) -> str:
     text = str(text)
-    if len(text) <= width:
-        return text.ljust(width)
+    plain = strip_ansi(text)
+    if len(plain) <= width:
+        return text + (" " * (width - len(plain)))
     if width <= 3:
-        return text[:width]
-    return text[: width - 3] + "..."
+        return plain[:width]
+    return plain[: width - 3] + "..."
 
 
 def block_max_width(lines: List[str], min_width: int = 20) -> int:
@@ -390,27 +431,31 @@ def diagnose_node(r: Result, prev_queue: int) -> str:
 def natural_alert_text(cluster: str, nodo: str, r: Result, severity: str) -> str:
     qty = fmt_num_dot(r.encolados)
     if severity == "error":
-        return f"{nodo} de {cluster} sin respuesta"
-    return f"{nodo} de {cluster}: {qty} correos en cola"
+        return f"{RED}{nodo} de {cluster} sin respuesta{RESET}"
+    if severity == "critical":
+        return f"{RED}{nodo} de {cluster}: {qty} correos en cola{RESET}"
+    return f"{YELLOW}{nodo} de {cluster}: {qty} correos en cola{RESET}"
 
 
 def natural_risk_text(cluster: str, nodo: str, diag: str) -> str:
+    if diag == "Sin respuesta":
+        return f"{RED}{nodo} de {cluster} sin respuesta{RESET}"
+
     mapping = {
-        "Sin respuesta": f"{nodo} de {cluster} sin respuesta",
-        "Salida alta": f"Salida SMTP alta en {nodo} ({cluster})",
-        "CPU alta": f"CPU alta en {nodo} ({cluster})",
-        "RAM alta": f"RAM alta en {nodo} ({cluster})",
-        "Queue sin salida": f"Cola sin salida en {nodo} ({cluster})",
-        "Queue creciendo": f"Cola creciendo en {nodo} ({cluster})",
-        "Muchos recips": f"Muchos destinatarios en {nodo} ({cluster})",
-        "Sin actividad": f"Sin actividad en {nodo} ({cluster})",
+        "Salida alta": f"{YELLOW}Salida SMTP alta en {nodo} ({cluster}){RESET}",
+        "CPU alta": f"{YELLOW}CPU alta en {nodo} ({cluster}){RESET}",
+        "RAM alta": f"{YELLOW}RAM alta en {nodo} ({cluster}){RESET}",
+        "Queue sin salida": f"{YELLOW}Cola sin salida en {nodo} ({cluster}){RESET}",
+        "Queue creciendo": f"{YELLOW}Cola creciendo en {nodo} ({cluster}){RESET}",
+        "Muchos recips": f"{YELLOW}Muchos destinatarios en {nodo} ({cluster}){RESET}",
+        "Sin actividad": f"{YELLOW}Sin actividad en {nodo} ({cluster}){RESET}",
     }
 
     if diag.startswith("Status="):
         status = diag.split("=", 1)[1]
-        return f"{nodo} de {cluster}: status {status}"
+        return f"{YELLOW}{nodo} de {cluster}: status {status}{RESET}"
 
-    return mapping.get(diag, f"{diag} en {nodo} ({cluster})")
+    return mapping.get(diag, f"{YELLOW}{diag} en {nodo} ({cluster}){RESET}")
 
 
 def safe_cluster_filename(cluster: str) -> str:
@@ -742,7 +787,7 @@ def build_node_alert_lines(current_data: Dict[str, Dict[str, Result]]) -> List[s
                 alerts.append(natural_alert_text(cluster, nodo, r, "warning"))
 
     if not alerts:
-        alerts.append("No se han detectado alertas en los nodos")
+        alerts.append(f"{GREEN}No se han detectado alertas en los nodos{RESET}")
 
     return alerts
 
@@ -762,7 +807,7 @@ def build_risk_nodes_lines(
                 findings.append(natural_risk_text(cluster, nodo, diag))
 
     if not findings:
-        findings.append("No se han detectado nodos en riesgo")
+        findings.append(f"{GREEN}No se han detectado nodos en riesgo{RESET}")
 
     return findings
 
@@ -776,9 +821,7 @@ def detect_mail_backlog_real(current_data: Dict[str, Dict[str, Result]]) -> List
 
         th = CLUSTER_THRESHOLDS[cluster]
         if total_queue >= th["total_warning"] and total_out <= len(nodo_map) * ADV_THRESHOLDS["smtp_low_conn_out"]:
-            findings.append(
-                f"{cluster}: backlog real (cola={fmt_num_dot(total_queue)}, conn_out={fmt_num_dot(total_out)})"
-            )
+            findings.append(f"{cluster}: backlog real (cola={fmt_num_dot(total_queue)}, conn_out={fmt_num_dot(total_out)})")
 
     return findings
 
@@ -876,18 +919,6 @@ def build_advanced_findings(
         lines.append("La plataforma no muestra señales claras de congestión o desequilibrio.")
         return lines
 
-    if backlog:
-        lines.append(f"{RED}Backlog real detectado:{RESET}")
-        for item in backlog[:5]:
-            lines.append(f"  - {item}")
-        lines.append("")
-
-    if saturation:
-        lines.append(f"{YELLOW}Saturación SMTP:{RESET}")
-        for item in saturation[:5]:
-            lines.append(f"  - {item}")
-        lines.append("")
-
     if imbalance:
         lines.append(f"{YELLOW}Desbalanceo entre nodos del cluster:{RESET}")
         for item in imbalance[:5]:
@@ -897,6 +928,18 @@ def build_advanced_findings(
     if storms:
         lines.append(f"{RED}Crecimiento brusco de cola:{RESET}")
         for item in storms[:5]:
+            lines.append(f"  - {item}")
+        lines.append("")
+
+    if backlog:
+        lines.append(f"{RED}Backlog real detectado:{RESET}")
+        for item in backlog[:5]:
+            lines.append(f"  - {item}")
+        lines.append("")
+
+    if saturation:
+        lines.append(f"{YELLOW}Saturación SMTP:{RESET}")
+        for item in saturation[:5]:
             lines.append(f"  - {item}")
         lines.append("")
 
@@ -949,12 +992,12 @@ def build_cluster_summary_lines(
             else:
                 variation_text = "Sin cambios"
 
-        status_text = total_status_text(cluster, current_total)
+        status_text = total_status_colored(cluster, current_total)
 
         lines.append(
             f"{cluster:<{c1}} | "
             f"{fmt_num_dot(current_total):>{c2}} | "
-            f"{status_text:^{c3}} | "
+            f"{ansi_center(status_text, c3)} | "
             f"{variation_text:^{c4}}"
         )
 
@@ -984,7 +1027,7 @@ def build_alert_column_lines(
                 found = True
 
     if not found:
-        lines.append("No se han detectado alertas")
+        lines.append(f"{GREEN}No se han detectado alertas{RESET}")
 
     return lines
 
@@ -1008,7 +1051,7 @@ def build_risk_column_lines(
                 found = True
 
     if not found:
-        lines.append("No se han detectado nodos en riesgo")
+        lines.append(f"{GREEN}No se han detectado nodos en riesgo{RESET}")
 
     return lines
 
@@ -1346,13 +1389,15 @@ def print_rates_table(
 
         delta_txt_raw = f"+{fmt_num_dot(delta_q)}" if delta_q > 0 else fmt_num_dot(delta_q)
         delta_txt = color_by_threshold(
-            delta_txt_raw.rjust(c_qd),
+            delta_txt_raw,
             delta_q,
             ADV_THRESHOLDS["growth_warning"],
             ADV_THRESHOLDS["growth_critical"],
         )
+        delta_txt = ansi_rjust(delta_txt, c_qd)
 
         tendencia = cluster_rate_tendency(total_comp_1m, total_comp_5m, total_comp_15m)
+        tendencia = ansi_rjust(tendencia, c_tr)
 
         print(
             f"{cluster:<{c_cluster}}"
@@ -1362,7 +1407,7 @@ def print_rates_table(
             f"{fmt_num_dot(total_comp_1m):>{c_comp}}"
             f"{fmt_num_dot(total_bnc_1m):>{c_bnc}}"
             f"{delta_txt}"
-            f"{tendencia:>{c_tr}}"
+            f"{tendencia}"
         )
 
 
