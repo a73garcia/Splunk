@@ -81,11 +81,21 @@ CSV_HEADERS = [
     "conn_in",
     "conn_out",
     "active_recips",
-    "rate_in_1m",
-    "rate_out_1m",
-    "rate_recips_1m",
-    "rate_completed_1m",
-    "rate_bounced_1m",
+    "inj_msgs_1m",
+    "inj_msgs_5m",
+    "inj_msgs_15m",
+    "delivered_recips_1m",
+    "delivered_recips_5m",
+    "delivered_recips_15m",
+    "inj_recips_1m",
+    "inj_recips_5m",
+    "inj_recips_15m",
+    "completed_recips_1m",
+    "completed_recips_5m",
+    "completed_recips_15m",
+    "soft_bounced_evts_1m",
+    "soft_bounced_evts_5m",
+    "soft_bounced_evts_15m",
     "error",
 ]
 
@@ -104,11 +114,27 @@ class Result:
     conn_in: int
     conn_out: int
     active_recips: int
-    rate_in_1m: int
-    rate_out_1m: int
-    rate_recips_1m: int
-    rate_completed_1m: int
-    rate_bounced_1m: int
+
+    inj_msgs_1m: int
+    inj_msgs_5m: int
+    inj_msgs_15m: int
+
+    delivered_recips_1m: int
+    delivered_recips_5m: int
+    delivered_recips_15m: int
+
+    inj_recips_1m: int
+    inj_recips_5m: int
+    inj_recips_15m: int
+
+    completed_recips_1m: int
+    completed_recips_5m: int
+    completed_recips_15m: int
+
+    soft_bounced_evts_1m: int
+    soft_bounced_evts_5m: int
+    soft_bounced_evts_15m: int
+
     error: Optional[str] = None
 
 
@@ -400,6 +426,26 @@ def safe_cluster_filename(cluster: str) -> str:
     return normalized
 
 
+def cluster_rate_tendency(cur_1m: int, avg_5m: int, avg_15m: int) -> str:
+    base_5 = max(avg_5m, 1)
+    base_15 = max(avg_15m, 1)
+
+    up_5 = cur_1m / base_5
+    up_15 = cur_1m / base_15
+
+    if cur_1m > avg_5m * 1.20 and cur_1m > avg_15m * 1.20:
+        return f"{GREEN}Subida fuerte{RESET}"
+    if cur_1m > avg_5m and cur_1m > avg_15m:
+        return f"{GREEN}Subida{RESET}"
+    if cur_1m < avg_5m * 0.80 and cur_1m < avg_15m * 0.80:
+        return f"{RED}Bajada fuerte{RESET}"
+    if cur_1m < avg_5m and cur_1m < avg_15m:
+        return f"{YELLOW}Bajada{RESET}"
+    if 0.95 <= up_5 <= 1.05 and 0.95 <= up_15 <= 1.05:
+        return "Estable"
+    return "Mixta"
+
+
 # =========================================================
 # CSV
 # =========================================================
@@ -438,11 +484,21 @@ def append_cluster_csv(cluster: str, results_map: Dict[str, Result], now: dateti
                 r.conn_in,
                 r.conn_out,
                 r.active_recips,
-                r.rate_in_1m,
-                r.rate_out_1m,
-                r.rate_recips_1m,
-                r.rate_completed_1m,
-                r.rate_bounced_1m,
+                r.inj_msgs_1m,
+                r.inj_msgs_5m,
+                r.inj_msgs_15m,
+                r.delivered_recips_1m,
+                r.delivered_recips_5m,
+                r.delivered_recips_15m,
+                r.inj_recips_1m,
+                r.inj_recips_5m,
+                r.inj_recips_15m,
+                r.completed_recips_1m,
+                r.completed_recips_5m,
+                r.completed_recips_15m,
+                r.soft_bounced_evts_1m,
+                r.soft_bounced_evts_5m,
+                r.soft_bounced_evts_15m,
                 r.error or "",
             ])
 
@@ -490,18 +546,26 @@ def parse_status(xml_text: str) -> Tuple[str, Dict[str, int]]:
         if name in gauges:
             gauges[name] = to_int(gauge.attrib.get("current"))
 
-    rates = {
-        "incoming_recipients": 0,
-        "delivered_recipients": 0,
-        "incoming_messages": 0,
-        "completed_recips": 0,
-        "soft_bounced_events": 0,
-    }
+    rate_names = [
+        "inj_msgs",
+        "inj_recips",
+        "soft_bounced_evts",
+        "completed_recips",
+        "delivered_recips",
+    ]
+
+    rates: Dict[str, int] = {}
+    for name in rate_names:
+        rates[f"{name}_1m"] = 0
+        rates[f"{name}_5m"] = 0
+        rates[f"{name}_15m"] = 0
 
     for rate in root.findall(".//rate"):
         name = rate.attrib.get("name")
-        if name in rates:
-            rates[name] = to_int(rate.attrib.get("last_1_min"))
+        if name in rate_names:
+            rates[f"{name}_1m"] = to_int(rate.attrib.get("last_1_min"))
+            rates[f"{name}_5m"] = to_int(rate.attrib.get("last_5_min"))
+            rates[f"{name}_15m"] = to_int(rate.attrib.get("last_15_min"))
 
     metrics = {**gauges, **rates}
     return system_status, metrics
@@ -533,9 +597,32 @@ def fetch_one(
 
             if r.status_code != 200:
                 return Result(
-                    timestamp, nodo, cluster, "offline",
-                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                    f"HTTP {r.status_code}"
+                    timestamp=timestamp,
+                    nodo=nodo,
+                    cluster=cluster,
+                    status="offline",
+                    encolados=0,
+                    cpu=0,
+                    ram=0,
+                    conn_in=0,
+                    conn_out=0,
+                    active_recips=0,
+                    inj_msgs_1m=0,
+                    inj_msgs_5m=0,
+                    inj_msgs_15m=0,
+                    delivered_recips_1m=0,
+                    delivered_recips_5m=0,
+                    delivered_recips_15m=0,
+                    inj_recips_1m=0,
+                    inj_recips_5m=0,
+                    inj_recips_15m=0,
+                    completed_recips_1m=0,
+                    completed_recips_5m=0,
+                    completed_recips_15m=0,
+                    soft_bounced_evts_1m=0,
+                    soft_bounced_evts_5m=0,
+                    soft_bounced_evts_15m=0,
+                    error=f"HTTP {r.status_code}",
                 )
 
             status, m = parse_status(r.text)
@@ -551,11 +638,21 @@ def fetch_one(
                 conn_in=m["conn_in"],
                 conn_out=m["conn_out"],
                 active_recips=m["active_recips"],
-                rate_in_1m=m["incoming_messages"],
-                rate_out_1m=m["delivered_recipients"],
-                rate_recips_1m=m["incoming_recipients"],
-                rate_completed_1m=m["completed_recips"],
-                rate_bounced_1m=m["soft_bounced_events"],
+                inj_msgs_1m=m["inj_msgs_1m"],
+                inj_msgs_5m=m["inj_msgs_5m"],
+                inj_msgs_15m=m["inj_msgs_15m"],
+                delivered_recips_1m=m["delivered_recips_1m"],
+                delivered_recips_5m=m["delivered_recips_5m"],
+                delivered_recips_15m=m["delivered_recips_15m"],
+                inj_recips_1m=m["inj_recips_1m"],
+                inj_recips_5m=m["inj_recips_5m"],
+                inj_recips_15m=m["inj_recips_15m"],
+                completed_recips_1m=m["completed_recips_1m"],
+                completed_recips_5m=m["completed_recips_5m"],
+                completed_recips_15m=m["completed_recips_15m"],
+                soft_bounced_evts_1m=m["soft_bounced_evts_1m"],
+                soft_bounced_evts_5m=m["soft_bounced_evts_5m"],
+                soft_bounced_evts_15m=m["soft_bounced_evts_15m"],
                 error=None,
             )
 
@@ -563,9 +660,32 @@ def fetch_one(
             last_err = str(e)
 
     return Result(
-        timestamp, nodo, cluster, "offline",
-        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-        last_err or "RequestException"
+        timestamp=timestamp,
+        nodo=nodo,
+        cluster=cluster,
+        status="offline",
+        encolados=0,
+        cpu=0,
+        ram=0,
+        conn_in=0,
+        conn_out=0,
+        active_recips=0,
+        inj_msgs_1m=0,
+        inj_msgs_5m=0,
+        inj_msgs_15m=0,
+        delivered_recips_1m=0,
+        delivered_recips_5m=0,
+        delivered_recips_15m=0,
+        inj_recips_1m=0,
+        inj_recips_5m=0,
+        inj_recips_15m=0,
+        completed_recips_1m=0,
+        completed_recips_5m=0,
+        completed_recips_15m=0,
+        soft_bounced_evts_1m=0,
+        soft_bounced_evts_5m=0,
+        soft_bounced_evts_15m=0,
+        error=last_err or "RequestException",
     )
 
 
@@ -1181,23 +1301,25 @@ def print_rates_table(
     print("RATES DE PROCESAMIENTO\n")
 
     c_cluster = 14
-    c_in = 8
-    c_out = 8
-    c_rec = 10
-    c_comp = 10
-    c_bnc = 10
-    c_qd = 9
+    c_in = 16
+    c_out = 15
+    c_rec = 17
+    c_comp = 17
+    c_bnc = 16
+    c_qd = 10
+    c_tr = 15
 
     print(
         f"{'Cluster':<{c_cluster}}"
-        f"{'In/1m':>{c_in}}"
-        f"{'Out/1m':>{c_out}}"
-        f"{'Recips/1m':>{c_rec}}"
-        f"{'Compl/1m':>{c_comp}}"
-        f"{'Bounce/1m':>{c_bnc}}"
-        f"{'Queue Δ':>{c_qd}}"
+        f"{'Msgs inyect. 1m':>{c_in}}"
+        f"{'Entregados 1m':>{c_out}}"
+        f"{'Dest. inyec. 1m':>{c_rec}}"
+        f"{'Completados 1m':>{c_comp}}"
+        f"{'Rebotes soft 1m':>{c_bnc}}"
+        f"{'Var. cola':>{c_qd}}"
+        f"{'Tendencia':>{c_tr}}"
     )
-    print("-" * (c_cluster + c_in + c_out + c_rec + c_comp + c_bnc + c_qd))
+    print("-" * (c_cluster + c_in + c_out + c_rec + c_comp + c_bnc + c_qd + c_tr))
 
     nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
@@ -1206,13 +1328,20 @@ def print_rates_table(
         nodo_map = current_data.get(cluster, {})
         prev_map = previous_data.get(cluster, {})
 
-        total_in = sum(r.rate_in_1m for r in nodo_map.values())
-        total_out = sum(r.rate_out_1m for r in nodo_map.values())
-        total_rec = sum(r.rate_recips_1m for r in nodo_map.values())
-        total_comp = sum(r.rate_completed_1m for r in nodo_map.values())
-        total_bnc = sum(r.rate_bounced_1m for r in nodo_map.values())
+        total_in_1m = sum(r.inj_msgs_1m for r in nodo_map.values())
+        total_out_1m = sum(r.delivered_recips_1m for r in nodo_map.values())
+        total_rec_1m = sum(r.inj_recips_1m for r in nodo_map.values())
+        total_comp_1m = sum(r.completed_recips_1m for r in nodo_map.values())
+        total_bnc_1m = sum(r.soft_bounced_evts_1m for r in nodo_map.values())
+
+        total_comp_5m = sum(r.completed_recips_5m for r in nodo_map.values())
+        total_comp_15m = sum(r.completed_recips_15m for r in nodo_map.values())
+
         total_cur_q = sum(r.encolados for r in nodo_map.values())
-        total_prev_q = sum(prev_map.get(n, nodo_map.get(n).encolados if nodo_map.get(n) else 0) for n in nodos)
+        total_prev_q = sum(
+            prev_map.get(n, nodo_map.get(n).encolados if nodo_map.get(n) else 0)
+            for n in nodos
+        )
         delta_q = total_cur_q - total_prev_q
 
         delta_txt_raw = f"+{fmt_num_dot(delta_q)}" if delta_q > 0 else fmt_num_dot(delta_q)
@@ -1223,14 +1352,17 @@ def print_rates_table(
             ADV_THRESHOLDS["growth_critical"],
         )
 
+        tendencia = cluster_rate_tendency(total_comp_1m, total_comp_5m, total_comp_15m)
+
         print(
             f"{cluster:<{c_cluster}}"
-            f"{fmt_num_dot(total_in):>{c_in}}"
-            f"{fmt_num_dot(total_out):>{c_out}}"
-            f"{fmt_num_dot(total_rec):>{c_rec}}"
-            f"{fmt_num_dot(total_comp):>{c_comp}}"
-            f"{fmt_num_dot(total_bnc):>{c_bnc}}"
+            f"{fmt_num_dot(total_in_1m):>{c_in}}"
+            f"{fmt_num_dot(total_out_1m):>{c_out}}"
+            f"{fmt_num_dot(total_rec_1m):>{c_rec}}"
+            f"{fmt_num_dot(total_comp_1m):>{c_comp}}"
+            f"{fmt_num_dot(total_bnc_1m):>{c_bnc}}"
             f"{delta_txt}"
+            f"{tendencia:>{c_tr}}"
         )
 
 
@@ -1276,7 +1408,7 @@ def run_monitor(auth: Tuple[str, str]) -> None:
     with requests.Session() as session:
         while not stop_event.is_set():
             now = datetime.now()
-            timestamp = now.strftime("%H:%S")
+            timestamp = now.strftime("%H:%M")
             current_data: Dict[str, Dict[str, Result]] = {}
 
             with ThreadPoolExecutor(max_workers=len(GROUPS)) as ex:
