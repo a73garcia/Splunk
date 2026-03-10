@@ -1345,48 +1345,21 @@ def print_rates_table(
     print("RENDIMIENTO OPERATIVO POR CLUSTER\n")
 
     term_w = terminal_width(180)
-
-    c_cluster = 14
-    n_equal_cols = 7          # MSG In, Recipient Out, Recipient In, Recipient Proc, Active Rcpt, Bounce Temp, Cola
-    tendencia_units = 3       # última columna = triple ancho
-    total_units = n_equal_cols + tendencia_units
-
-    usable = max(96, term_w - c_cluster)
-    base_w = usable // total_units
-    extra = usable - (base_w * total_units)
-
-    c_mid = base_w
-    c_tr = base_w * tendencia_units
-
-    # reparte sobrante: primero a la última y luego al resto
-    c_tr += min(extra, tendencia_units)
-    extra -= min(extra, tendencia_units)
-
-    mid_widths = [c_mid] * n_equal_cols
-    i = 0
-    while extra > 0:
-        mid_widths[i % n_equal_cols] += 1
-        extra -= 1
-        i += 1
-
-    c_in, c_out, c_rec, c_comp, c_active, c_bnc, c_qd = mid_widths
-
-    header = (
-        f"{'Cluster':<{c_cluster}}"
-        f"{'MSG In':>{c_in}}"
-        f"{'Recipient Out':>{c_out}}"
-        f"{'Recipient In':>{c_rec}}"
-        f"{'Recipient Proc':>{c_comp}}"
-        f"{'Active Rcpt':>{c_active}}"
-        f"{'Bounce Temp':>{c_bnc}}"
-        f"{'Cola':>{c_qd}}"
-        f"{'Tendencia':>{c_tr}}"
-    )
-    print(header)
-    print("-" * visible_text_len(header))
-
     nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
+    headers = [
+        ("cluster", "Cluster"),
+        ("in", "MSG In"),
+        ("out", "Recipient Out"),
+        ("rec", "Recipient In"),
+        ("comp", "Recipient Proc"),
+        ("active", "Active Rcpt"),
+        ("bnc", "Bounce Temp"),
+        ("cola", "Cola"),
+        ("trend", "Tendencia"),
+    ]
+
+    rows = []
     for group in GROUPS:
         cluster = group["cluster"]
         nodo_map = current_data.get(cluster, {})
@@ -1416,10 +1389,6 @@ def print_rates_table(
             ADV_THRESHOLDS["growth_warning"],
             ADV_THRESHOLDS["growth_critical"],
         )
-        cola_txt = ansi_rjust(cola_txt, c_qd)
-
-        tendencia = cluster_rate_tendency(total_comp_1m, total_comp_5m, total_comp_15m)
-        tendencia = ansi_rjust(tendencia, c_tr)
 
         active_txt = color_by_threshold(
             fmt_num_dot(total_active),
@@ -1427,19 +1396,102 @@ def print_rates_table(
             ADV_THRESHOLDS["active_recips_warning"],
             ADV_THRESHOLDS["active_recips_warning"] * 2,
         )
-        active_txt = ansi_rjust(active_txt, c_active)
 
-        print(
-            f"{cluster:<{c_cluster}}"
-            f"{fmt_num_dot(total_in_1m):>{c_in}}"
-            f"{fmt_num_dot(total_out_1m):>{c_out}}"
-            f"{fmt_num_dot(total_rec_1m):>{c_rec}}"
-            f"{fmt_num_dot(total_comp_1m):>{c_comp}}"
-            f"{active_txt}"
-            f"{fmt_num_dot(total_bnc_1m):>{c_bnc}}"
-            f"{cola_txt}"
-            f"{tendencia}"
+        tendencia_txt = cluster_rate_tendency(total_comp_1m, total_comp_5m, total_comp_15m)
+
+        rows.append({
+            "cluster": cluster,
+            "in": fmt_num_dot(total_in_1m),
+            "out": fmt_num_dot(total_out_1m),
+            "rec": fmt_num_dot(total_rec_1m),
+            "comp": fmt_num_dot(total_comp_1m),
+            "active": active_txt,
+            "bnc": fmt_num_dot(total_bnc_1m),
+            "cola": cola_txt,
+            "trend": tendencia_txt,
+        })
+
+    # Anchura mínima por contenido real
+    natural_widths = {}
+    for key, title in headers:
+        max_len = len(title)
+        for row in rows:
+            max_len = max(max_len, visible_text_len(row[key]))
+        natural_widths[key] = max_len + 2
+
+    total_natural = sum(natural_widths[k] for k, _ in headers)
+
+    # Si cabe, usa anchura natural
+    if total_natural <= term_w:
+        widths = natural_widths.copy()
+    else:
+        # Ajuste proporcional al contenido
+        min_widths = {
+            "cluster": 10,
+            "in": 8,
+            "out": 10,
+            "rec": 10,
+            "comp": 10,
+            "active": 10,
+            "bnc": 9,
+            "cola": 6,
+            "trend": 10,
+        }
+
+        base_total = sum(min_widths.values())
+        available_extra = max(0, term_w - base_total)
+
+        extras_needed = {
+            k: max(0, natural_widths[k] - min_widths[k])
+            for k, _ in headers
+        }
+        extras_total = sum(extras_needed.values())
+
+        widths = min_widths.copy()
+
+        if extras_total > 0 and available_extra > 0:
+            allocated = {}
+            for k, _ in headers:
+                share = int(available_extra * (extras_needed[k] / extras_total))
+                allocated[k] = share
+                widths[k] += share
+
+            used = sum(allocated.values())
+            remainder = available_extra - used
+
+            # Reparto final priorizando columnas más "caras"
+            priority = sorted(
+                [k for k, _ in headers],
+                key=lambda x: extras_needed[x],
+                reverse=True
+            )
+            i = 0
+            while remainder > 0 and priority:
+                widths[priority[i % len(priority)]] += 1
+                remainder -= 1
+                i += 1
+
+    header = "".join(
+        title.ljust(widths[key]) if key == "cluster"
+        else title.rjust(widths[key])
+        for key, title in headers
+    )
+    print(header)
+    print("-" * visible_text_len(header))
+
+    for row in rows:
+        line = (
+            f"{row['cluster']:<{widths['cluster']}}"
+            f"{ansi_rjust(row['in'], widths['in'])}"
+            f"{ansi_rjust(row['out'], widths['out'])}"
+            f"{ansi_rjust(row['rec'], widths['rec'])}"
+            f"{ansi_rjust(row['comp'], widths['comp'])}"
+            f"{ansi_rjust(row['active'], widths['active'])}"
+            f"{ansi_rjust(row['bnc'], widths['bnc'])}"
+            f"{ansi_rjust(row['cola'], widths['cola'])}"
+            f"{ansi_rjust(row['trend'], widths['trend'])}"
         )
+        print(line)
 
 def print_status_incidents(current_data: Dict[str, Dict[str, Result]]) -> None:
     incidents = build_status_incidents(current_data)
