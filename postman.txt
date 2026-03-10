@@ -38,7 +38,7 @@ RESET = "\033[0m"
 
 GROUPS = [
     {"cluster": "Europa",       "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status"},
-    {"cluster": "América",      "pattern": "https://dh5504-esa{idx}.iphmx.com/xml/status"},
+    {"cluster": "América",      "pattern": "https://dh5504-esa{idx}.c3s2.iphmx.com/xml/status"},
     {"cluster": "Brasil",       "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status"},
     {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status"},
 ]
@@ -81,6 +81,11 @@ CSV_HEADERS = [
     "conn_in",
     "conn_out",
     "active_recips",
+    "rate_in_1m",
+    "rate_out_1m",
+    "rate_recips_1m",
+    "rate_completed_1m",
+    "rate_bounced_1m",
     "error",
 ]
 
@@ -99,6 +104,11 @@ class Result:
     conn_in: int
     conn_out: int
     active_recips: int
+    rate_in_1m: int
+    rate_out_1m: int
+    rate_recips_1m: int
+    rate_completed_1m: int
+    rate_bounced_1m: int
     error: Optional[str] = None
 
 
@@ -149,6 +159,7 @@ def fmt_num_dot(n: int) -> str:
 def to_int(value: Optional[str]) -> int:
     if value is None:
         return 0
+
     s = str(value).strip()
     if not s or s.upper() == "N/A":
         return 0
@@ -181,16 +192,6 @@ def total_status_text(cluster: str, total: int) -> str:
     if total >= th["total_warning"]:
         return "WARNING"
     return "OK"
-
-
-def total_status_colored_fixed(cluster: str, total: int, width: int = 10) -> str:
-    status = total_status_text(cluster, total).center(width)
-    raw = status.strip()
-    if raw == "CRITICAL":
-        return f"{RED}{status}{RESET}"
-    if raw == "WARNING":
-        return f"{YELLOW}{status}{RESET}"
-    return f"{GREEN}{status}{RESET}"
 
 
 def print_orange_separator(width: int = 210) -> None:
@@ -258,7 +259,6 @@ def choose_three_col_widths(
     need3 = block_max_width(lines3, min3)
 
     total_need = need1 + need2 + need3
-
     if total_need <= available:
         return need1, need2, need3
 
@@ -438,6 +438,11 @@ def append_cluster_csv(cluster: str, results_map: Dict[str, Result], now: dateti
                 r.conn_in,
                 r.conn_out,
                 r.active_recips,
+                r.rate_in_1m,
+                r.rate_out_1m,
+                r.rate_recips_1m,
+                r.rate_completed_1m,
+                r.rate_bounced_1m,
                 r.error or "",
             ])
 
@@ -471,7 +476,7 @@ def parse_status(xml_text: str) -> Tuple[str, Dict[str, int]]:
     if sys_node is not None:
         system_status = sys_node.attrib.get("status", system_status)
 
-    metrics = {
+    gauges = {
         "msgs_in_work_queue": 0,
         "cpu_utilization": 0,
         "ram_utilization": 0,
@@ -482,9 +487,23 @@ def parse_status(xml_text: str) -> Tuple[str, Dict[str, int]]:
 
     for gauge in root.findall(".//gauge"):
         name = gauge.attrib.get("name")
-        if name in metrics:
-            metrics[name] = to_int(gauge.attrib.get("current"))
+        if name in gauges:
+            gauges[name] = to_int(gauge.attrib.get("current"))
 
+    rates = {
+        "incoming_recipients": 0,
+        "delivered_recipients": 0,
+        "incoming_messages": 0,
+        "completed_recips": 0,
+        "soft_bounced_events": 0,
+    }
+
+    for rate in root.findall(".//rate"):
+        name = rate.attrib.get("name")
+        if name in rates:
+            rates[name] = to_int(rate.attrib.get("last_1_min"))
+
+    metrics = {**gauges, **rates}
     return system_status, metrics
 
 
@@ -513,7 +532,11 @@ def fetch_one(
             )
 
             if r.status_code != 200:
-                return Result(timestamp, nodo, cluster, "offline", 0, 0, 0, 0, 0, 0, f"HTTP {r.status_code}")
+                return Result(
+                    timestamp, nodo, cluster, "offline",
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    f"HTTP {r.status_code}"
+                )
 
             status, m = parse_status(r.text)
 
@@ -528,13 +551,22 @@ def fetch_one(
                 conn_in=m["conn_in"],
                 conn_out=m["conn_out"],
                 active_recips=m["active_recips"],
+                rate_in_1m=m["incoming_messages"],
+                rate_out_1m=m["delivered_recipients"],
+                rate_recips_1m=m["incoming_recipients"],
+                rate_completed_1m=m["completed_recips"],
+                rate_bounced_1m=m["soft_bounced_events"],
                 error=None,
             )
 
         except requests.exceptions.RequestException as e:
             last_err = str(e)
 
-    return Result(timestamp, nodo, cluster, "offline", 0, 0, 0, 0, 0, 0, last_err or "RequestException")
+    return Result(
+        timestamp, nodo, cluster, "offline",
+        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+        last_err or "RequestException"
+    )
 
 
 def fetch_cluster(
@@ -624,7 +656,9 @@ def detect_mail_backlog_real(current_data: Dict[str, Dict[str, Result]]) -> List
 
         th = CLUSTER_THRESHOLDS[cluster]
         if total_queue >= th["total_warning"] and total_out <= len(nodo_map) * ADV_THRESHOLDS["smtp_low_conn_out"]:
-            findings.append(f"{cluster}: backlog real (cola={fmt_num_dot(total_queue)}, conn_out={fmt_num_dot(total_out)})")
+            findings.append(
+                f"{cluster}: backlog real (cola={fmt_num_dot(total_queue)}, conn_out={fmt_num_dot(total_out)})"
+            )
 
     return findings
 
@@ -1140,6 +1174,66 @@ def print_node_health_table(
         print(line)
 
 
+def print_rates_table(
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+) -> None:
+    print("RATES DE PROCESAMIENTO\n")
+
+    c_cluster = 14
+    c_in = 8
+    c_out = 8
+    c_rec = 10
+    c_comp = 10
+    c_bnc = 10
+    c_qd = 9
+
+    print(
+        f"{'Cluster':<{c_cluster}}"
+        f"{'In/1m':>{c_in}}"
+        f"{'Out/1m':>{c_out}}"
+        f"{'Recips/1m':>{c_rec}}"
+        f"{'Compl/1m':>{c_comp}}"
+        f"{'Bounce/1m':>{c_bnc}}"
+        f"{'Queue Δ':>{c_qd}}"
+    )
+    print("-" * (c_cluster + c_in + c_out + c_rec + c_comp + c_bnc + c_qd))
+
+    nodos = [f"ESA{i:02d}" for i in range(1, 21)]
+
+    for group in GROUPS:
+        cluster = group["cluster"]
+        nodo_map = current_data.get(cluster, {})
+        prev_map = previous_data.get(cluster, {})
+
+        total_in = sum(r.rate_in_1m for r in nodo_map.values())
+        total_out = sum(r.rate_out_1m for r in nodo_map.values())
+        total_rec = sum(r.rate_recips_1m for r in nodo_map.values())
+        total_comp = sum(r.rate_completed_1m for r in nodo_map.values())
+        total_bnc = sum(r.rate_bounced_1m for r in nodo_map.values())
+        total_cur_q = sum(r.encolados for r in nodo_map.values())
+        total_prev_q = sum(prev_map.get(n, nodo_map.get(n).encolados if nodo_map.get(n) else 0) for n in nodos)
+        delta_q = total_cur_q - total_prev_q
+
+        delta_txt_raw = f"+{fmt_num_dot(delta_q)}" if delta_q > 0 else fmt_num_dot(delta_q)
+        delta_txt = color_by_threshold(
+            delta_txt_raw.rjust(c_qd),
+            delta_q,
+            ADV_THRESHOLDS["growth_warning"],
+            ADV_THRESHOLDS["growth_critical"],
+        )
+
+        print(
+            f"{cluster:<{c_cluster}}"
+            f"{fmt_num_dot(total_in):>{c_in}}"
+            f"{fmt_num_dot(total_out):>{c_out}}"
+            f"{fmt_num_dot(total_rec):>{c_rec}}"
+            f"{fmt_num_dot(total_comp):>{c_comp}}"
+            f"{fmt_num_dot(total_bnc):>{c_bnc}}"
+            f"{delta_txt}"
+        )
+
+
 def print_status_incidents(current_data: Dict[str, Dict[str, Result]]) -> None:
     incidents = build_status_incidents(current_data)
 
@@ -1218,6 +1312,11 @@ def run_monitor(auth: Tuple[str, str]) -> None:
                 print_orange_separator()
                 print()
                 print_node_health_table(current_data, previous_data)
+
+                print()
+                print_orange_separator()
+                print()
+                print_rates_table(current_data, previous_data)
 
                 print()
                 print_orange_separator()
