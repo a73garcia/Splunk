@@ -1338,35 +1338,44 @@ def print_node_health_table(
         line += " |"
         print(line)
 
-
 def print_rates_table(
     current_data: Dict[str, Dict[str, Result]],
     previous_data: Dict[str, Dict[str, int]],
 ) -> None:
     print("RENDIMIENTO OPERATIVO POR CLUSTER\n")
 
-    c_cluster = 14
-    c_in = 18
-    c_out = 22
-    c_rec = 21
-    c_comp = 23
-    c_act = 22
-    c_bnc = 20
-    c_qd = 14
-    c_tr = 21
+    term_w = terminal_width(180)
 
-    print(
+    c_cluster = 14
+    c_tr = 14
+
+    # 7 columnas intermedias:
+    # MSG In, Recipient Out, Recipient In, Recipient Proc,
+    # Active Rcpt, Bounce Temp, Cola
+    middle_cols = 7
+    usable = max(84, term_w - c_cluster - c_tr)
+    c_mid = usable // middle_cols
+    extra = usable - (c_mid * middle_cols)
+
+    widths = [c_mid] * middle_cols
+    for i in range(extra):
+        widths[i] += 1
+
+    c_in, c_out, c_rec, c_comp, c_active, c_bnc, c_qd = widths
+
+    header = (
         f"{'Cluster':<{c_cluster}}"
-        f"{'Mensajes aceptados 1m':>{c_in}}"
-        f"{'Destinatarios entregados 1m':>{c_out}}"
-        f"{'Destinatarios aceptados 1m':>{c_rec}}"
-        f"{'Destinatarios completados 1m':>{c_comp}}"
-        f"{'Destinatarios activos':>{c_act}}"
-        f"{'Rebotes temporales 1m':>{c_bnc}}"
-        f"{'Variación cola':>{c_qd}}"
-        f"{'Tendencia operativa':>{c_tr}}"
+        f"{'MSG In':>{c_in}}"
+        f"{'Recipient Out':>{c_out}}"
+        f"{'Recipient In':>{c_rec}}"
+        f"{'Recipient Proc':>{c_comp}}"
+        f"{'Active Rcpt':>{c_active}}"
+        f"{'Bounce Temp':>{c_bnc}}"
+        f"{'Cola':>{c_qd}}"
+        f"{'Tendencia':>{c_tr}}"
     )
-    print("-" * (c_cluster + c_in + c_out + c_rec + c_comp + c_act + c_bnc + c_qd + c_tr))
+    print(header)
+    print("-" * visible_text_len(header))
 
     nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
@@ -1392,14 +1401,14 @@ def print_rates_table(
         )
         delta_q = total_cur_q - total_prev_q
 
-        delta_txt_raw = f"+{fmt_num_dot(delta_q)}" if delta_q > 0 else fmt_num_dot(delta_q)
-        delta_txt = color_by_threshold(
-            delta_txt_raw,
+        cola_txt_raw = f"+{fmt_num_dot(delta_q)}" if delta_q > 0 else fmt_num_dot(delta_q)
+        cola_txt = color_by_threshold(
+            cola_txt_raw,
             delta_q,
             ADV_THRESHOLDS["growth_warning"],
             ADV_THRESHOLDS["growth_critical"],
         )
-        delta_txt = ansi_rjust(delta_txt, c_qd)
+        cola_txt = ansi_rjust(cola_txt, c_qd)
 
         tendencia = cluster_rate_tendency(total_comp_1m, total_comp_5m, total_comp_15m)
         tendencia = ansi_rjust(tendencia, c_tr)
@@ -1410,7 +1419,7 @@ def print_rates_table(
             ADV_THRESHOLDS["active_recips_warning"],
             ADV_THRESHOLDS["active_recips_warning"] * 2,
         )
-        active_txt = ansi_rjust(active_txt, c_act)
+        active_txt = ansi_rjust(active_txt, c_active)
 
         print(
             f"{cluster:<{c_cluster}}"
@@ -1420,10 +1429,9 @@ def print_rates_table(
             f"{fmt_num_dot(total_comp_1m):>{c_comp}}"
             f"{active_txt}"
             f"{fmt_num_dot(total_bnc_1m):>{c_bnc}}"
-            f"{delta_txt}"
+            f"{cola_txt}"
             f"{tendencia}"
         )
-
 
 def print_status_incidents(current_data: Dict[str, Dict[str, Result]]) -> None:
     incidents = build_status_incidents(current_data)
