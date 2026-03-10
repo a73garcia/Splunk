@@ -1398,14 +1398,17 @@ def print_rates_table(
         prev_map = previous_data.get(cluster, {})
 
         total_in_1m = sum(r.inj_msgs_1m for r in nodo_map.values())
+        total_in_5m = sum(r.inj_msgs_5m for r in nodo_map.values())
+
         total_out_1m = sum(r.delivered_recips_1m for r in nodo_map.values())
         total_rec_1m = sum(r.inj_recips_1m for r in nodo_map.values())
-        total_comp_1m = sum(r.completed_recips_1m for r in nodo_map.values())
-        total_active = sum(r.active_recips for r in nodo_map.values())
-        total_bnc_1m = sum(r.soft_bounced_evts_1m for r in nodo_map.values())
 
+        total_comp_1m = sum(r.completed_recips_1m for r in nodo_map.values())
         total_comp_5m = sum(r.completed_recips_5m for r in nodo_map.values())
         total_comp_15m = sum(r.completed_recips_15m for r in nodo_map.values())
+
+        total_active = sum(r.active_recips for r in nodo_map.values())
+        total_bnc_1m = sum(r.soft_bounced_evts_1m for r in nodo_map.values())
 
         total_cur_q = sum(r.encolados for r in nodo_map.values())
         total_prev_q = sum(
@@ -1414,13 +1417,17 @@ def print_rates_table(
         )
         delta_q = total_cur_q - total_prev_q
 
-        cola_txt_raw = f"+{fmt_num_dot(delta_q)}" if delta_q > 0 else fmt_num_dot(delta_q)
-        cola_txt = color_by_threshold(
-            cola_txt_raw,
-            delta_q,
-            ADV_THRESHOLDS["growth_warning"],
-            ADV_THRESHOLDS["growth_critical"],
-        )
+        # Cola más explicativa
+        if delta_q >= ADV_THRESHOLDS["growth_critical"]:
+            cola_txt = f"{RED}+{fmt_num_dot(delta_q)} creciendo{RESET}"
+        elif delta_q >= ADV_THRESHOLDS["growth_warning"]:
+            cola_txt = f"{YELLOW}+{fmt_num_dot(delta_q)} subiendo{RESET}"
+        elif delta_q <= -ADV_THRESHOLDS["growth_critical"]:
+            cola_txt = f"{GREEN}{fmt_num_dot(delta_q)} drenando{RESET}"
+        elif delta_q <= -ADV_THRESHOLDS["growth_warning"]:
+            cola_txt = f"{GREEN}{fmt_num_dot(delta_q)} bajando{RESET}"
+        else:
+            cola_txt = "Estable"
 
         active_txt = color_by_threshold(
             fmt_num_dot(total_active),
@@ -1429,7 +1436,16 @@ def print_rates_table(
             ADV_THRESHOLDS["active_recips_warning"] * 2,
         )
 
-        tendencia_txt = cluster_rate_tendency(total_comp_1m, total_comp_5m, total_comp_15m)
+        tendencia_txt = cluster_rate_tendency(
+            msg_in_1m=total_in_1m,
+            msg_in_5m=total_in_5m,
+            comp_1m=total_comp_1m,
+            comp_5m=total_comp_5m,
+            comp_15m=total_comp_15m,
+            queue_delta=delta_q,
+            active_recips=total_active,
+            bounce_1m=total_bnc_1m,
+        )
 
         rows.append({
             "cluster": cluster,
@@ -1443,7 +1459,7 @@ def print_rates_table(
             "trend": tendencia_txt,
         })
 
-    # Anchura mínima por contenido real
+    # Anchura natural basada en cabeceras + contenido real
     natural_widths = {}
     for key, title in headers:
         max_len = len(title)
@@ -1453,11 +1469,9 @@ def print_rates_table(
 
     total_natural = sum(natural_widths[k] for k, _ in headers)
 
-    # Si cabe, usa anchura natural
     if total_natural <= term_w:
         widths = natural_widths.copy()
     else:
-        # Ajuste proporcional al contenido
         min_widths = {
             "cluster": 10,
             "in": 8,
@@ -1466,8 +1480,8 @@ def print_rates_table(
             "comp": 10,
             "active": 10,
             "bnc": 9,
-            "cola": 6,
-            "trend": 10,
+            "cola": 12,
+            "trend": 18,
         }
 
         base_total = sum(min_widths.values())
@@ -1491,7 +1505,6 @@ def print_rates_table(
             used = sum(allocated.values())
             remainder = available_extra - used
 
-            # Reparto final priorizando columnas más "caras"
             priority = sorted(
                 [k for k, _ in headers],
                 key=lambda x: extras_needed[x],
