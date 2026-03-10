@@ -1347,21 +1347,29 @@ def print_rates_table(
     term_w = terminal_width(180)
 
     c_cluster = 14
-    c_tr = 14
+    n_equal_cols = 7          # MSG In, Recipient Out, Recipient In, Recipient Proc, Active Rcpt, Bounce Temp, Cola
+    tendencia_units = 3       # última columna = triple ancho
+    total_units = n_equal_cols + tendencia_units
 
-    # 7 columnas intermedias:
-    # MSG In, Recipient Out, Recipient In, Recipient Proc,
-    # Active Rcpt, Bounce Temp, Cola
-    middle_cols = 7
-    usable = max(84, term_w - c_cluster - c_tr)
-    c_mid = usable // middle_cols
-    extra = usable - (c_mid * middle_cols)
+    usable = max(96, term_w - c_cluster)
+    base_w = usable // total_units
+    extra = usable - (base_w * total_units)
 
-    widths = [c_mid] * middle_cols
-    for i in range(extra):
-        widths[i] += 1
+    c_mid = base_w
+    c_tr = base_w * tendencia_units
 
-    c_in, c_out, c_rec, c_comp, c_active, c_bnc, c_qd = widths
+    # reparte sobrante: primero a la última y luego al resto
+    c_tr += min(extra, tendencia_units)
+    extra -= min(extra, tendencia_units)
+
+    mid_widths = [c_mid] * n_equal_cols
+    i = 0
+    while extra > 0:
+        mid_widths[i % n_equal_cols] += 1
+        extra -= 1
+        i += 1
+
+    c_in, c_out, c_rec, c_comp, c_active, c_bnc, c_qd = mid_widths
 
     header = (
         f"{'Cluster':<{c_cluster}}"
