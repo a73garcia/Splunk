@@ -470,25 +470,57 @@ def safe_cluster_filename(cluster: str) -> str:
     )
     return normalized
 
+def cluster_rate_tendency(
+    msg_in_1m: int,
+    msg_in_5m: int,
+    comp_1m: int,
+    comp_5m: int,
+    comp_15m: int,
+    queue_delta: int,
+    active_recips: int,
+    bounce_1m: int,
+) -> str:
+    # Prioridad 1: comportamiento de cola
+    if queue_delta >= ADV_THRESHOLDS["growth_critical"]:
+        return f"{RED}Cola creciendo{RESET}"
+    if queue_delta <= -ADV_THRESHOLDS["growth_warning"]:
+        return f"{GREEN}Cola drenando{RESET}"
 
-def cluster_rate_tendency(cur_1m: int, avg_5m: int, avg_15m: int) -> str:
-    base_5 = max(avg_5m, 1)
-    base_15 = max(avg_15m, 1)
+    # Prioridad 2: carga viva anormal
+    if active_recips >= ADV_THRESHOLDS["active_recips_warning"] * 2:
+        if comp_1m < comp_5m:
+            return f"{RED}Carga alta con proceso bajo{RESET}"
+        return f"{YELLOW}Carga activa elevada{RESET}"
 
-    up_5 = cur_1m / base_5
-    up_15 = cur_1m / base_15
+    # Prioridad 3: rebotes temporales
+    if bounce_1m >= 1000:
+        return f"{YELLOW}Rebotes temporales altos{RESET}"
 
-    if cur_1m > avg_5m * 1.20 and cur_1m > avg_15m * 1.20:
-        return f"{GREEN}Subida fuerte{RESET}"
-    if cur_1m > avg_5m and cur_1m > avg_15m:
-        return f"{GREEN}Subida{RESET}"
-    if cur_1m < avg_5m * 0.80 and cur_1m < avg_15m * 0.80:
-        return f"{RED}Bajada fuerte{RESET}"
-    if cur_1m < avg_5m and cur_1m < avg_15m:
-        return f"{YELLOW}Bajada{RESET}"
-    if 0.95 <= up_5 <= 1.05 and 0.95 <= up_15 <= 1.05:
-        return "Estable"
-    return "Mixta"
+    # Prioridad 4: tendencia de procesamiento
+    up_5 = comp_1m / max(comp_5m, 1)
+    up_15 = comp_1m / max(comp_15m, 1)
+
+    if up_5 >= 1.20 and up_15 >= 1.20:
+        return f"{GREEN}Procesamiento acelerando{RESET}"
+
+    if up_5 <= 0.80 and up_15 <= 0.80:
+        return f"{RED}Procesamiento cayendo{RESET}"
+
+    # Prioridad 5: tendencia de entrada
+    msg_ratio = msg_in_1m / max(msg_in_5m, 1)
+
+    if msg_ratio >= 1.20 and queue_delta >= 0:
+        return f"{YELLOW}Tráfico creciendo{RESET}"
+
+    if msg_ratio <= 0.80 and queue_delta <= 0:
+        return f"{GREEN}Entrada moderándose{RESET}"
+
+    # Prioridad 6: equilibrio general
+    if 0.95 <= up_5 <= 1.05 and 0.95 <= up_15 <= 1.05 and abs(queue_delta) <= 5:
+        return "Carga estable"
+
+    return "Actividad irregular"
+
 
 
 # =========================================================
