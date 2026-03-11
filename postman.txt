@@ -25,6 +25,7 @@ TIMEOUT_SECONDS = 12
 MAX_WORKERS = 12
 RETRIES = 2
 REFRESH_SECONDS = 60
+COUNTDOWN_STEP_SECONDS = 10
 
 VERIFY_SSL = False
 if not VERIFY_SSL:
@@ -51,20 +52,20 @@ CLUSTER_THRESHOLDS = {
 }
 
 ADV_THRESHOLDS = {
-    "cpu_warning": 70,
-    "cpu_critical": 85,
-    "ram_warning": 75,
-    "ram_critical": 90,
-    "conn_warning": 20,
-    "conn_critical": 40,
-    "growth_warning": 25,
-    "growth_critical": 75,
-    "active_recips_warning": 5000,
+    "cpu_warning": 85,
+    "cpu_critical": 95,
+    "ram_warning": 85,
+    "ram_critical": 95,
+    "conn_warning": 75,
+    "conn_critical": 90,
+    "growth_warning": 100,
+    "growth_critical": 300,
+    "active_recips_warning": 25000,
     "smtp_low_conn_out": 5,
-    "smtp_high_conn_out": 35,
+    "smtp_high_conn_out": 60,
     "imbalance_ratio_warning": 2.0,
     "imbalance_ratio_critical": 3.0,
-    "stuck_min_queue": 100,
+    "stuck_min_queue": 500,
     "stuck_cycles": 3,
 }
 
@@ -260,7 +261,9 @@ def total_status_colored(cluster: str, total: int) -> str:
     return f"{GREEN}{status}{RESET}"
 
 
-def print_orange_separator(width: int = 210) -> None:
+def print_orange_separator(width: int | None = None) -> None:
+    if width is None:
+        width = terminal_width(180)
     print(f"{ORANGE}{'═' * width}{RESET}")
 
 
@@ -355,6 +358,20 @@ def choose_three_col_widths(
         i += 1
 
     return tuple(assigned)
+
+
+def format_countdown(seconds_left: int) -> str:
+    seconds_left = max(0, int(seconds_left))
+    mm = seconds_left // 60
+    ss = seconds_left % 60
+    return f"{mm:02d}:{ss:02d}"
+
+
+def print_header_with_timer(title: str, seconds_left: int) -> None:
+    term_w = terminal_width(180)
+    timer_txt = f"Refresh {format_countdown(seconds_left)}"
+    spaces = max(1, term_w - len(title) - len(timer_txt))
+    print(f"{title}{' ' * spaces}{timer_txt}\n")
 
 
 def health_score(r: Result, prev_queue: int) -> int:
@@ -470,6 +487,7 @@ def safe_cluster_filename(cluster: str) -> str:
     )
     return normalized
 
+
 def cluster_rate_tendency(
     msg_in_1m: int,
     msg_in_5m: int,
@@ -480,23 +498,19 @@ def cluster_rate_tendency(
     active_recips: int,
     bounce_1m: int,
 ) -> str:
-    # Prioridad 1: comportamiento de cola
     if queue_delta >= ADV_THRESHOLDS["growth_critical"]:
         return f"{RED}Cola creciendo{RESET}"
     if queue_delta <= -ADV_THRESHOLDS["growth_warning"]:
         return f"{GREEN}Cola drenando{RESET}"
 
-    # Prioridad 2: carga viva anormal
     if active_recips >= ADV_THRESHOLDS["active_recips_warning"] * 2:
         if comp_1m < comp_5m:
             return f"{RED}Carga alta con proceso bajo{RESET}"
         return f"{YELLOW}Carga activa elevada{RESET}"
 
-    # Prioridad 3: rebotes temporales
     if bounce_1m >= 1000:
         return f"{YELLOW}Rebotes temporales altos{RESET}"
 
-    # Prioridad 4: tendencia de procesamiento
     up_5 = comp_1m / max(comp_5m, 1)
     up_15 = comp_1m / max(comp_15m, 1)
 
@@ -506,7 +520,6 @@ def cluster_rate_tendency(
     if up_5 <= 0.80 and up_15 <= 0.80:
         return f"{RED}Procesamiento cayendo{RESET}"
 
-    # Prioridad 5: tendencia de entrada
     msg_ratio = msg_in_1m / max(msg_in_5m, 1)
 
     if msg_ratio >= 1.20 and queue_delta >= 0:
@@ -515,12 +528,10 @@ def cluster_rate_tendency(
     if msg_ratio <= 0.80 and queue_delta <= 0:
         return f"{GREEN}Entrada moderándose{RESET}"
 
-    # Prioridad 6: equilibrio general
     if 0.95 <= up_5 <= 1.05 and 0.95 <= up_15 <= 1.05 and abs(queue_delta) <= 5:
         return "Carga estable"
 
     return "Actividad irregular"
-
 
 
 # =========================================================
@@ -804,7 +815,7 @@ def build_status_incidents(current_data: Dict[str, Dict[str, Result]]) -> List[T
     return incidents
 
 
-def build_node_alert_lines(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
+def build_alert_column_lines(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
     alerts: List[str] = []
 
     for cluster, nodo_map in current_data.items():
@@ -819,12 +830,12 @@ def build_node_alert_lines(current_data: Dict[str, Dict[str, Result]]) -> List[s
                 alerts.append(natural_alert_text(cluster, nodo, r, "warning"))
 
     if not alerts:
-        alerts.append(f"{GREEN}No se han detectado alertas en los nodos{RESET}")
+        alerts.append(f"{GREEN}No se han detectado alertas{RESET}")
 
     return alerts
 
 
-def build_risk_nodes_lines(
+def build_risk_column_lines(
     current_data: Dict[str, Dict[str, Result]],
     previous_data: Dict[str, Dict[str, int]],
 ) -> List[str]:
@@ -1370,6 +1381,7 @@ def print_node_health_table(
         line += " |"
         print(line)
 
+
 def print_rates_table(
     current_data: Dict[str, Dict[str, Result]],
     previous_data: Dict[str, Dict[str, int]],
@@ -1417,7 +1429,6 @@ def print_rates_table(
         )
         delta_q = total_cur_q - total_prev_q
 
-        # Cola más explicativa
         if delta_q >= ADV_THRESHOLDS["growth_critical"]:
             cola_txt = f"{RED}+{fmt_num_dot(delta_q)} creciendo{RESET}"
         elif delta_q >= ADV_THRESHOLDS["growth_warning"]:
@@ -1459,7 +1470,6 @@ def print_rates_table(
             "trend": tendencia_txt,
         })
 
-    # Anchura natural basada en cabeceras + contenido real
     natural_widths = {}
     for key, title in headers:
         max_len = len(title)
@@ -1538,6 +1548,7 @@ def print_rates_table(
         )
         print(line)
 
+
 def print_status_incidents(current_data: Dict[str, Dict[str, Result]]) -> None:
     incidents = build_status_incidents(current_data)
 
@@ -1602,8 +1613,13 @@ def run_monitor(auth: Tuple[str, str]) -> None:
                     queue_history[cluster].setdefault(nodo, []).append(r.encolados)
                     queue_history[cluster][nodo] = queue_history[cluster][nodo][-5:]
 
-            def draw():
-                print("MONITOR COLAS ESA\n")
+            previous_data_snapshot = {
+                c: {n: r.encolados for n, r in m.items()}
+                for c, m in current_data.items()
+            }
+
+            def draw(seconds_left: int):
+                print_header_with_timer("MONITOR COLAS ESA", seconds_left)
 
                 print_top_three_columns(current_data, previous_data)
                 print()
@@ -1635,17 +1651,19 @@ def run_monitor(auth: Tuple[str, str]) -> None:
                 print(f"\nCSV mensuales en: {CSV_OUTPUT_DIR}")
                 print("Pulsa ESC para salir")
 
-            render_screen(draw)
+            remaining = REFRESH_SECONDS
+            while remaining > 0 and not stop_event.is_set():
+                render_screen(lambda rem=remaining: draw(rem))
 
-            previous_data = {
-                c: {n: r.encolados for n, r in m.items()}
-                for c, m in current_data.items()
-            }
+                sleep_time = min(COUNTDOWN_STEP_SECONDS, remaining)
+                slept = 0.0
+                while slept < sleep_time and not stop_event.is_set():
+                    time.sleep(0.1)
+                    slept += 0.1
 
-            for _ in range(REFRESH_SECONDS * 10):
-                if stop_event.is_set():
-                    break
-                time.sleep(0.1)
+                remaining -= sleep_time
+
+            previous_data = previous_data_snapshot
 
     clear_screen()
     print("Monitor detenido (ESC pulsado)")
