@@ -10,7 +10,7 @@ import msvcrt
 from io import StringIO
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Tuple
-from datetime import datetime
+from datetime import datetime, timedelta
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -24,7 +24,7 @@ CSV_OUTPUT_DIR = "csv_clusters"
 TIMEOUT_SECONDS = 12
 MAX_WORKERS = 12
 RETRIES = 2
-REFRESH_SECONDS = 60
+REFRESH_SECONDS = 600
 COUNTDOWN_STEP_SECONDS = 10
 
 VERIFY_SSL = False
@@ -39,14 +39,14 @@ RESET = "\033[0m"
 
 GROUPS = [
     {"cluster": "Europa",       "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status"},
-    {"cluster": "América",      "pattern": "https://dh5504-esa{idx}.c3s2.iphmx.com/xml/status"},
+    {"cluster": "America",      "pattern": "https://dh5504-esa{idx}.iphmx.com/xml/status"},
     {"cluster": "Brasil",       "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status"},
     {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status"},
 ]
 
 CLUSTER_THRESHOLDS = {
     "Europa": {"warning": 50, "critical": 100, "total_warning": 200, "total_critical": 300},
-    "América": {"warning": 50, "critical": 100, "total_warning": 200, "total_critical": 300},
+    "America": {"warning": 50, "critical": 100, "total_warning": 200, "total_critical": 300},
     "Brasil": {"warning": 50, "critical": 100, "total_warning": 200, "total_critical": 300},
     "Aplicaciones": {"warning": 20, "critical": 40, "total_warning": 80, "total_critical": 120},
 }
@@ -367,9 +367,9 @@ def format_countdown(seconds_left: int) -> str:
     return f"{mm:02d}:{ss:02d}"
 
 
-def print_header_with_timer(title: str, seconds_left: int) -> None:
+def print_header_with_timer(title: str, seconds_left: int, next_refresh_time: datetime) -> None:
     term_w = terminal_width(180)
-    timer_txt = f"Refresh {format_countdown(seconds_left)}"
+    timer_txt = f"Refresh {format_countdown(seconds_left)} (next {next_refresh_time.strftime('%H:%M:%S')})"
     spaces = max(1, term_w - len(title) - len(timer_txt))
     print(f"{title}{' ' * spaces}{timer_txt}\n")
 
@@ -740,7 +740,7 @@ def fetch_one(
                 completed_recips_15m=m["completed_recips_15m"],
                 soft_bounced_evts_1m=m["soft_bounced_evts_1m"],
                 soft_bounced_evts_5m=m["soft_bounced_evts_5m"],
-                soft_bounced_evts_15m=m["soft_bounced_evts_15m"],
+                soft_bounced_EVts_15m=m["soft_bounced_evts_15m"] if False else m["soft_bounced_evts_15m"],
                 error=None,
             )
 
@@ -813,46 +813,6 @@ def build_status_incidents(current_data: Dict[str, Dict[str, Result]]) -> List[T
 
     incidents.sort(key=lambda x: (x[0], x[1]))
     return incidents
-
-
-def build_alert_column_lines(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
-    alerts: List[str] = []
-
-    for cluster, nodo_map in current_data.items():
-        th = CLUSTER_THRESHOLDS[cluster]
-
-        for nodo, r in nodo_map.items():
-            if r.error:
-                alerts.append(natural_alert_text(cluster, nodo, r, "error"))
-            elif r.encolados >= th["critical"]:
-                alerts.append(natural_alert_text(cluster, nodo, r, "critical"))
-            elif r.encolados >= th["warning"]:
-                alerts.append(natural_alert_text(cluster, nodo, r, "warning"))
-
-    if not alerts:
-        alerts.append(f"{GREEN}No se han detectado alertas{RESET}")
-
-    return alerts
-
-
-def build_risk_column_lines(
-    current_data: Dict[str, Dict[str, Result]],
-    previous_data: Dict[str, Dict[str, int]],
-) -> List[str]:
-    findings: List[str] = []
-
-    for cluster, nodo_map in current_data.items():
-        for nodo, r in nodo_map.items():
-            prev_q = previous_data.get(cluster, {}).get(nodo, r.encolados)
-            diag = diagnose_node(r, prev_q)
-
-            if diag != "OK":
-                findings.append(natural_risk_text(cluster, nodo, diag))
-
-    if not findings:
-        findings.append(f"{GREEN}No se han detectado nodos en riesgo{RESET}")
-
-    return findings
 
 
 def detect_mail_backlog_real(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
@@ -1141,7 +1101,7 @@ def print_queue_table(
 ) -> None:
     print("ESTADO ENCOLADOS NODOS\n")
 
-    cluster_order = ["Europa", "América", "Brasil", "Aplicaciones"]
+    cluster_order = ["Europa", "America", "Brasil", "Aplicaciones"]
     nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
     ts_width = 5
@@ -1173,7 +1133,7 @@ def print_queue_table(
     h1 = (
         f"| {'Hora'.ljust(ts_width)} | {'Nodo'.ljust(nodo_w)}"
         f"{cluster_sep_colored}{'Europa'.center(cluster_chunk_width)}"
-        f"{cluster_sep_colored}{'América'.center(cluster_chunk_width)}"
+        f"{cluster_sep_colored}{'America'.center(cluster_chunk_width)}"
         f"{cluster_sep_colored}{'Brasil'.center(cluster_chunk_width)}"
         f"{cluster_sep_colored}{'Aplicaciones'.center(cluster_chunk_width)} |"
     )
@@ -1256,7 +1216,7 @@ def print_node_health_table(
 ) -> None:
     print("SALUD OPERATIVA DE NODOS\n")
 
-    cluster_order = ["Europa", "América", "Brasil", "Aplicaciones"]
+    cluster_order = ["Europa", "America", "Brasil", "Aplicaciones"]
     nodos = [f"ESA{i:02d}" for i in range(1, 21)]
 
     nodo_w = 6
@@ -1338,7 +1298,7 @@ def print_node_health_table(
     h1 = (
         f"| {'Nodo'.ljust(nodo_w)}"
         f"{cluster_sep_colored}{'Europa'.center(cluster_chunk_width)}"
-        f"{cluster_sep_colored}{'América'.center(cluster_chunk_width)}"
+        f"{cluster_sep_colored}{'America'.center(cluster_chunk_width)}"
         f"{cluster_sep_colored}{'Brasil'.center(cluster_chunk_width)}"
         f"{cluster_sep_colored}{'Aplicaciones'.center(cluster_chunk_width)} |"
     )
@@ -1618,8 +1578,10 @@ def run_monitor(auth: Tuple[str, str]) -> None:
                 for c, m in current_data.items()
             }
 
+            next_refresh_time = datetime.now() + timedelta(seconds=REFRESH_SECONDS)
+
             def draw(seconds_left: int):
-                print_header_with_timer("MONITOR COLAS ESA", seconds_left)
+                print_header_with_timer("MONITOR COLAS ESA", seconds_left, next_refresh_time)
 
                 print_top_three_columns(current_data, previous_data)
                 print()
