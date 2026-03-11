@@ -740,7 +740,7 @@ def fetch_one(
                 completed_recips_15m=m["completed_recips_15m"],
                 soft_bounced_evts_1m=m["soft_bounced_evts_1m"],
                 soft_bounced_evts_5m=m["soft_bounced_evts_5m"],
-                soft_bounced_EVts_15m=m["soft_bounced_evts_15m"] if False else m["soft_bounced_evts_15m"],
+                soft_bounced_evts_15m=m["soft_bounced_evts_15m"],
                 error=None,
             )
 
