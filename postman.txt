@@ -758,634 +758,143 @@ def parse_status(xml_text: str) -> Tuple[str, Dict[str, int]]:
 
 
 # =========================================================
-# DETECCIONES Y TABLAS
+# NETWORK
 # =========================================================
-def build_status_incidents(current_data: Dict[str, Dict[str, Result]]) -> List[Tuple[str, str, str]]:
-    incidents: List[Tuple[str, str, str]] = []
-
-    for cluster, nodo_map in current_data.items():
-        for nodo, r in nodo_map.items():
-            if r.error:
-                incidents.append((cluster, nodo, "Sin respuesta"))
-            elif str(r.status).lower() != "online":
-                incidents.append((cluster, nodo, f"Status={r.status}"))
-
-    incidents.sort(key=lambda x: (x[0], x[1]))
-    return incidents
-
-
-def detect_mail_backlog_real(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
-    findings = []
-    for cluster, nodo_map in current_data.items():
-        total_queue = sum(r.encolados for r in nodo_map.values())
-        total_out = sum(r.conn_out for r in nodo_map.values())
-        th = CLUSTER_THRESHOLDS[cluster]
-        if total_queue >= th["total_warning"] and total_out <= len(nodo_map) * ADV_THRESHOLDS["smtp_low_conn_out"]:
-            findings.append(f"{cluster}: backlog real (cola={fmt_num_dot(total_queue)}, conn_out={fmt_num_dot(total_out)})")
-    return findings
-
-
-def detect_smtp_saturation(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
-    findings = []
-    for cluster, nodo_map in current_data.items():
-        for nodo, r in nodo_map.items():
-            if r.conn_out >= ADV_THRESHOLDS["conn_critical"] and r.cpu >= ADV_THRESHOLDS["cpu_warning"]:
-                findings.append(f"{cluster} {nodo}: saturación SMTP (CO={fmt_num_dot(r.conn_out)}, CPU={r.cpu})")
-            elif r.conn_out >= ADV_THRESHOLDS["conn_critical"] and r.ram >= ADV_THRESHOLDS["ram_warning"]:
-                findings.append(f"{cluster} {nodo}: salida alta con RAM elevada (CO={fmt_num_dot(r.conn_out)}, RAM={r.ram})")
-    return findings
-
-
-def detect_cluster_imbalance(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
-    findings = []
-    for cluster, nodo_map in current_data.items():
-        queues = [r.encolados for r in nodo_map.values()]
-        if not queues:
-            continue
-        max_q = max(queues)
-        min_q = min(queues)
-        avg_q = sum(queues) / len(queues)
-        if avg_q <= 0:
-            continue
-        ratio = max_q / max(avg_q, 1)
-        if ratio >= ADV_THRESHOLDS["imbalance_ratio_critical"]:
-            findings.append(f"{cluster}: desbalanceado crítico (máx={fmt_num_dot(max_q)}, media={fmt_num_dot(int(avg_q))})")
-        elif ratio >= ADV_THRESHOLDS["imbalance_ratio_warning"]:
-            findings.append(f"{cluster}: desbalanceado (máx={fmt_num_dot(max_q)}, media={fmt_num_dot(int(avg_q))})")
-        if max_q > 0 and min_q == 0:
-            findings.append(f"{cluster}: nodos vacíos y nodos cargados a la vez")
-    return findings
-
-
-def detect_queue_storm(
-    current_data: Dict[str, Dict[str, Result]],
-    previous_data: Dict[str, Dict[str, int]],
-) -> List[str]:
-    findings = []
-    for cluster, nodo_map in current_data.items():
-        for nodo, r in nodo_map.items():
-            prev_q = previous_data.get(cluster, {}).get(nodo, r.encolados)
-            growth = r.encolados - prev_q
-            if growth >= ADV_THRESHOLDS["growth_critical"]:
-                findings.append(f"{cluster} {nodo}: queue storm +{fmt_num_dot(growth)}")
-            elif growth >= ADV_THRESHOLDS["growth_warning"] and r.conn_out <= ADV_THRESHOLDS["smtp_low_conn_out"]:
-                findings.append(f"{cluster} {nodo}: cola subiendo sin salida +{fmt_num_dot(growth)}")
-    return findings
-
-
-def detect_stuck_nodes(history: Dict[str, Dict[str, List[int]]]) -> List[str]:
-    findings = []
-    for cluster, nodo_map in history.items():
-        for nodo, series in nodo_map.items():
-            if len(series) < ADV_THRESHOLDS["stuck_cycles"]:
-                continue
-            tail = series[-ADV_THRESHOLDS["stuck_cycles"]:]
-            if len(set(tail)) == 1 and tail[-1] >= ADV_THRESHOLDS["stuck_min_queue"]:
-                findings.append(f"{cluster} {nodo}: nodo stuck (cola fija={fmt_num_dot(tail[-1])})")
-    return findings
-
-
-def build_advanced_findings(
-    current_data: Dict[str, Dict[str, Result]],
-    previous_data: Dict[str, Dict[str, int]],
-    history: Dict[str, Dict[str, List[int]]],
-) -> List[str]:
-    lines: List[str] = []
-
-    backlog = detect_mail_backlog_real(current_data)
-    saturation = detect_smtp_saturation(current_data)
-    imbalance = detect_cluster_imbalance(current_data)
-    storms = detect_queue_storm(current_data, previous_data)
-    stuck = detect_stuck_nodes(history)
-
-    if not any([backlog, saturation, imbalance, storms, stuck]):
-        lines.append(f"{GREEN}Sin hallazgos relevantes.{RESET}")
-        lines.append("La plataforma no muestra señales claras de congestión o desequilibrio.")
-        return lines
-
-    if imbalance:
-        lines.append(f"{YELLOW}Desbalanceo entre nodos del cluster:{RESET}")
-        for item in imbalance[:5]:
-            lines.append(f"  - {item}")
-        lines.append("")
-
-    if storms:
-        lines.append(f"{RED}Crecimiento brusco de cola:{RESET}")
-        for item in storms[:5]:
-            lines.append(f"  - {item}")
-        lines.append("")
-
-    if backlog:
-        lines.append(f"{RED}Backlog real detectado:{RESET}")
-        for item in backlog[:5]:
-            lines.append(f"  - {item}")
-        lines.append("")
-
-    if saturation:
-        lines.append(f"{YELLOW}Saturación SMTP:{RESET}")
-        for item in saturation[:5]:
-            lines.append(f"  - {item}")
-        lines.append("")
-
-    if stuck:
-        lines.append(f"{RED}Nodos posiblemente bloqueados:{RESET}")
-        for item in stuck[:5]:
-            lines.append(f"  - {item}")
-
-    return lines
-
-
-def build_cluster_summary_lines(
-    current_data: Dict[str, Dict[str, Result]],
-    previous_data: Dict[str, Dict[str, int]],
-) -> List[str]:
-    nodos = [f"ESA{i:02d}" for i in range(1, 21)]
-
-    c1 = 13
-    c2 = 8
-    c3 = 10
-    c4 = 18
-
-    lines: List[str] = []
-    lines.append("RESUMEN CLUSTERS")
-    lines.append("─" * (c1 + c2 + c3 + c4 + 9))
-    lines.append(
-        f"{'Cluster':<{c1}} | "
-        f"{'Total':^{c2}} | "
-        f"{'Estado':^{c3}} | "
-        f"{'Última variación':^{c4}}"
-    )
-
-    for group in GROUPS:
-        cluster = group["cluster"]
-        current_total = sum(r.encolados for r in current_data.get(cluster, {}).values())
-        prev_map = previous_data.get(cluster, {})
-        previous_total = sum(prev_map.get(nodo, 0) for nodo in nodos)
-
-        if cluster not in previous_data:
-            variation_text = "Sin histórico"
-        else:
-            delta = current_total - previous_total
-            if delta > 0:
-                variation_text = f"Sube +{fmt_num_dot(delta)}"
-            elif delta < 0:
-                variation_text = f"Baja -{fmt_num_dot(abs(delta))}"
-            else:
-                variation_text = "Sin cambios"
-
-        status_text = total_status_colored(cluster, current_total)
-
-        lines.append(
-            f"{cluster:<{c1}} | "
-            f"{fmt_num_dot(current_total):>{c2}} | "
-            f"{ansi_center(status_text, c3)} | "
-            f"{variation_text:^{c4}}"
-        )
-
-    return lines
-
-
-def build_alert_column_lines(current_data: Dict[str, Dict[str, Result]]) -> List[str]:
-    lines: List[str] = []
-    lines.append("ALERTAS NODOS")
-    lines.append("─" * 42)
-
-    found = False
-    for cluster, nodo_map in current_data.items():
-        th = CLUSTER_THRESHOLDS[cluster]
-        for nodo, r in nodo_map.items():
-            if r.error:
-                lines.append(natural_alert_text(cluster, nodo, r, "error"))
-                found = True
-            elif r.encolados >= th["critical"]:
-                lines.append(natural_alert_text(cluster, nodo, r, "critical"))
-                found = True
-            elif r.encolados >= th["warning"]:
-                lines.append(natural_alert_text(cluster, nodo, r, "warning"))
-                found = True
-
-    if not found:
-        lines.append(f"{GREEN}No se han detectado alertas{RESET}")
-
-    return lines
-
-
-def build_risk_column_lines(
-    current_data: Dict[str, Dict[str, Result]],
-    previous_data: Dict[str, Dict[str, int]],
-) -> List[str]:
-    lines: List[str] = []
-    lines.append("NODOS EN RIESGO")
-    lines.append("─" * 42)
-
-    found = False
-    for cluster, nodo_map in current_data.items():
-        for nodo, r in nodo_map.items():
-            prev_q = previous_data.get(cluster, {}).get(nodo, r.encolados)
-            diag = diagnose_node(r, prev_q)
-            if diag != "OK":
-                lines.append(natural_risk_text(cluster, nodo, diag))
-                found = True
-
-    if not found:
-        lines.append(f"{GREEN}No se han detectado nodos en riesgo{RESET}")
-
-    return lines
-
-
-def print_top_three_columns(
-    current_data: Dict[str, Dict[str, Result]],
-    previous_data: Dict[str, Dict[str, int]],
-) -> None:
-    gap = "   "
-
-    col1 = build_cluster_summary_lines(current_data, previous_data)
-    col2 = build_alert_column_lines(current_data)
-    col3 = build_risk_column_lines(current_data, previous_data)
-
-    col1_w, col2_w, col3_w = choose_three_col_widths(
-        col1, col2, col3, min1=58, min2=40, min3=40, gap=len(gap)
-    )
-
-    rows = max(len(col1), len(col2), len(col3))
-    col1 += [""] * (rows - len(col1))
-    col2 += [""] * (rows - len(col2))
-    col3 += [""] * (rows - len(col3))
-
-    for a, b, c in zip(col1, col2, col3):
-        print(f"{pad_or_trim(a, col1_w)}{gap}{pad_or_trim(b, col2_w)}{gap}{pad_or_trim(c, col3_w)}")
-
-
-def print_status_incidents(current_data: Dict[str, Dict[str, Result]]) -> None:
-    incidents = build_status_incidents(current_data)
-
-    print("INCIDENCIAS\n")
-    if not incidents:
-        print(f"{GREEN}No se han detectado incidencias{RESET}")
-        return
-
-    for cluster, nodo, msg in incidents:
-        if msg == "Sin respuesta":
-            print(f"{RED}No hay respuesta del nodo {nodo} de {cluster}{RESET}")
-        else:
-            status = msg.split("=", 1)[1] if "=" in msg else msg
-            print(f"{RED}El estado del nodo {nodo} de {cluster} es {status}{RESET}")
-
-
-def print_advanced_findings(
-    current_data: Dict[str, Dict[str, Result]],
-    previous_data: Dict[str, Dict[str, int]],
-    history: Dict[str, Dict[str, List[int]]],
-) -> None:
-    lines = build_advanced_findings(current_data, previous_data, history)
-    print("ANÁLISIS AVANZADO\n")
-    for line in lines:
-        print(line)
-
-
-def print_queue_table(
+def fetch_one(
+    session: requests.Session,
+    url: str,
+    auth: Tuple[str, str],
     timestamp: str,
-    current_data: Dict[str, Dict[str, Result]],
-    previous_data: Dict[str, Dict[str, int]],
-) -> None:
-    print("ESTADO ENCOLADOS NODOS\n")
+    cluster: str,
+    idx: int,
+) -> Result:
+    nodo = nodo_from_index(idx)
+    last_err: Optional[str] = None
 
-    cluster_order = ["Europa", "America", "Brasil", "Aplicaciones"]
-    nodos = [f"ESA{i:02d}" for i in range(1, 21)]
+    for _ in range(RETRIES + 1):
+        try:
+            r = session.get(
+                url,
+                auth=auth,
+                timeout=TIMEOUT_SECONDS,
+                verify=VERIFY_SSL,
+                headers={"Accept": "application/xml"},
+            )
 
-    ts_width = 5
-    nodo_w = 6
-    ant_w = 9
-    act_w = 9
-    var_w = 5
-    ac_w = 8
+            if r.status_code != 200:
+                return Result(
+                    timestamp=timestamp,
+                    nodo=nodo,
+                    cluster=cluster,
+                    status="offline",
+                    encolados=0,
+                    cpu=0,
+                    ram=0,
+                    conn_in=0,
+                    conn_out=0,
+                    active_recips=0,
+                    inj_msgs_1m=0,
+                    inj_msgs_5m=0,
+                    inj_msgs_15m=0,
+                    delivered_recips_1m=0,
+                    delivered_recips_5m=0,
+                    delivered_recips_15m=0,
+                    inj_recips_1m=0,
+                    inj_recips_5m=0,
+                    inj_recips_15m=0,
+                    completed_recips_1m=0,
+                    completed_recips_5m=0,
+                    completed_recips_15m=0,
+                    soft_bounced_evts_1m=0,
+                    soft_bounced_evts_5m=0,
+                    soft_bounced_evts_15m=0,
+                    error=f"HTTP {r.status_code}",
+                )
 
-    col_sep = " | "
-    cluster_sep_plain = " || "
-    cluster_sep_colored = f" {orange_cluster_sep()} "
-    cluster_chunk_width = ant_w + len(col_sep) + act_w + len(col_sep) + var_w + len(col_sep) + ac_w
+            status, m = parse_status(r.text)
 
-    def fmt_chunk(prev_val: int, cur_val: int, var_val: str, ac_val: int, cluster: str, has_error: bool) -> str:
-        ant_txt = fmt_num_dot(prev_val).rjust(ant_w)
-        q_txt = queue_color(cluster, fmt_num_dot(cur_val).rjust(act_w), cur_val)
-        var_txt = var_val.center(var_w)
-        ac_txt = fmt_num_dot(ac_val).rjust(ac_w)
+            return Result(
+                timestamp=timestamp,
+                nodo=nodo,
+                cluster=cluster,
+                status=status,
+                encolados=m["msgs_in_work_queue"],
+                cpu=m["cpu_utilization"],
+                ram=m["ram_utilization"],
+                conn_in=m["conn_in"],
+                conn_out=m["conn_out"],
+                active_recips=m["active_recips"],
+                inj_msgs_1m=m["inj_msgs_1m"],
+                inj_msgs_5m=m["inj_msgs_5m"],
+                inj_msgs_15m=m["inj_msgs_15m"],
+                delivered_recips_1m=m["delivered_recips_1m"],
+                delivered_recips_5m=m["delivered_recips_5m"],
+                delivered_recips_15m=m["delivered_recips_15m"],
+                inj_recips_1m=m["inj_recips_1m"],
+                inj_recips_5m=m["inj_recips_5m"],
+                inj_recips_15m=m["inj_recips_15m"],
+                completed_recips_1m=m["completed_recips_1m"],
+                completed_recips_5m=m["completed_recips_5m"],
+                completed_recips_15m=m["completed_recips_15m"],
+                soft_bounced_evts_1m=m["soft_bounced_evts_1m"],
+                soft_bounced_evts_5m=m["soft_bounced_evts_5m"],
+                soft_bounced_evts_15m=m["soft_bounced_evts_15m"],
+                error=None,
+            )
 
-        if has_error:
-            ant_txt = f"{RED}{ant_txt}{RESET}"
-            q_txt = f"{RED}{fmt_num_dot(cur_val).rjust(act_w)}{RESET}"
-            var_txt = f"{RED}{var_txt}{RESET}"
-            ac_txt = f"{RED}{fmt_num_dot(ac_val).rjust(ac_w)}{RESET}"
+        except requests.exceptions.RequestException as e:
+            last_err = str(e)
 
-        return f"{ant_txt}{col_sep}{q_txt}{col_sep}{var_txt}{col_sep}{ac_txt}"
-
-    h1 = (
-        f"| {'Hora'.ljust(ts_width)} | {'Nodo'.ljust(nodo_w)}"
-        f"{cluster_sep_colored}{'Europa'.center(cluster_chunk_width)}"
-        f"{cluster_sep_colored}{'America'.center(cluster_chunk_width)}"
-        f"{cluster_sep_colored}{'Brasil'.center(cluster_chunk_width)}"
-        f"{cluster_sep_colored}{'Aplicaciones'.center(cluster_chunk_width)} |"
+    return Result(
+        timestamp=timestamp,
+        nodo=nodo,
+        cluster=cluster,
+        status="offline",
+        encolados=0,
+        cpu=0,
+        ram=0,
+        conn_in=0,
+        conn_out=0,
+        active_recips=0,
+        inj_msgs_1m=0,
+        inj_msgs_5m=0,
+        inj_msgs_15m=0,
+        delivered_recips_1m=0,
+        delivered_recips_5m=0,
+        delivered_recips_15m=0,
+        inj_recips_1m=0,
+        inj_recips_5m=0,
+        inj_recips_15m=0,
+        completed_recips_1m=0,
+        completed_recips_5m=0,
+        completed_recips_15m=0,
+        soft_bounced_evts_1m=0,
+        soft_bounced_evts_5m=0,
+        soft_bounced_evts_15m=0,
+        error=last_err or "RequestException",
     )
 
-    sub = (
-        f"{'Anterior'.center(ant_w)}{col_sep}"
-        f"{'Encolados'.center(act_w)}{col_sep}"
-        f"{'Var'.center(var_w)}{col_sep}"
-        f"{'AC'.center(ac_w)}"
-    )
 
-    h2 = (
-        f"| {'':<{ts_width}} | {'':<{nodo_w}}"
-        f"{cluster_sep_colored}{sub}"
-        f"{cluster_sep_colored}{sub}"
-        f"{cluster_sep_colored}{sub}"
-        f"{cluster_sep_colored}{sub} |"
-    )
+def fetch_cluster(
+    session: requests.Session,
+    group: Dict,
+    auth: Tuple[str, str],
+    timestamp: str,
+) -> List[Result]:
+    cluster = group["cluster"]
+    pattern = group["pattern"]
 
-    sep = "-" * (2 + ts_width + 3 + nodo_w + (len(cluster_sep_plain) + cluster_chunk_width) * 4 + 2)
+    results: List[Result] = []
 
-    print(h1)
-    print(h2)
-    print(sep)
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
+        futures = [
+            ex.submit(fetch_one, session, pattern.format(idx=i), auth, timestamp, cluster, i)
+            for i in range(1, 21)
+        ]
+        for fut in as_completed(futures):
+            results.append(fut.result())
 
-    for nodo in nodos:
-        line = f"| {timestamp.ljust(ts_width)} | {nodo.ljust(nodo_w)}"
-
-        for cluster in cluster_order:
-            cur_map = current_data.get(cluster, {})
-            prev_map = previous_data.get(cluster, {})
-
-            r = cur_map.get(nodo)
-            cur_val = r.encolados if r else 0
-            ac_val = r.active_recips if r else 0
-            prev_val = prev_map.get(nodo, cur_val)
-            var = trend_symbol(prev_val, cur_val)
-            has_error = bool(r.error) if r else False
-
-            chunk = fmt_chunk(prev_val, cur_val, var, ac_val, cluster, has_error)
-            line += f"{cluster_sep_colored}{chunk}"
-
-        line += " |"
-        print(line)
-
-    print(sep)
-
-    total_line = f"| {'':<{ts_width}} | {'TOTAL'.ljust(nodo_w)}"
-    for cluster in cluster_order:
-        cur_map = current_data.get(cluster, {})
-        prev_map = previous_data.get(cluster, {})
-
-        total_cur = sum(r.encolados for r in cur_map.values())
-        total_prev = sum(prev_map.get(n, cur_map.get(n).encolados if cur_map.get(n) else 0) for n in nodos)
-        total_ac = sum(r.active_recips for r in cur_map.values())
-        var = trend_symbol(total_prev, total_cur)
-
-        ant_txt = fmt_num_dot(total_prev).rjust(ant_w)
-        q_txt = queue_color(cluster, fmt_num_dot(total_cur).rjust(act_w), total_cur)
-        var_txt = var.center(var_w)
-        ac_txt = fmt_num_dot(total_ac).rjust(ac_w)
-
-        chunk = f"{ant_txt}{col_sep}{q_txt}{col_sep}{var_txt}{col_sep}{ac_txt}"
-        total_line += f"{cluster_sep_colored}{chunk}"
-
-    total_line += " |"
-    print(total_line)
-
-
-def print_node_health_table(
-    current_data: Dict[str, Dict[str, Result]],
-    previous_data: Dict[str, Dict[str, int]],
-) -> None:
-    print("SALUD OPERATIVA DE NODOS\n")
-
-    cluster_order = ["Europa", "America", "Brasil", "Aplicaciones"]
-    nodos = [f"ESA{i:02d}" for i in range(1, 21)]
-
-    nodo_w = 6
-    st_w = 8
-    cpu_w = 3
-    ram_w = 3
-    ci_w = 5
-    co_w = 5
-    hs_w = 3
-
-    col_sep = " | "
-    cluster_sep_plain = " || "
-    cluster_sep_colored = f" {orange_cluster_sep()} "
-
-    cluster_chunk_width = st_w + len(col_sep) + cpu_w + len(col_sep) + ram_w + len(col_sep) + ci_w + len(col_sep) + co_w + len(col_sep) + hs_w
-
-    def fmt_chunk(r: Optional[Result], prev_q: int) -> str:
-        if r is None:
-            return f"{'offline'.rjust(st_w)}{col_sep}{'0'.rjust(cpu_w)}{col_sep}{'0'.rjust(ram_w)}{col_sep}{'0'.rjust(ci_w)}{col_sep}{'0'.rjust(co_w)}{col_sep}{'0'.rjust(hs_w)}"
-
-        if r.error or str(r.status).lower() != "online":
-            status_txt = f"{RED}{'INCIDENT'.rjust(st_w)}{RESET}"
-        else:
-            status_txt = "online".rjust(st_w)
-
-        cpu_txt = color_by_threshold(str(r.cpu).rjust(cpu_w), r.cpu, ADV_THRESHOLDS["cpu_warning"], ADV_THRESHOLDS["cpu_critical"])
-        ram_txt = color_by_threshold(str(r.ram).rjust(ram_w), r.ram, ADV_THRESHOLDS["ram_warning"], ADV_THRESHOLDS["ram_critical"])
-        ci_txt = color_by_threshold(fmt_num_dot(r.conn_in).rjust(ci_w), r.conn_in, ADV_THRESHOLDS["conn_warning"], ADV_THRESHOLDS["conn_critical"])
-        co_txt = color_by_threshold(fmt_num_dot(r.conn_out).rjust(co_w), r.conn_out, ADV_THRESHOLDS["conn_warning"], ADV_THRESHOLDS["conn_critical"])
-
-        score = health_score(r, prev_q)
-        hs_txt = health_color(str(score).rjust(hs_w), score)
-
-        return f"{status_txt}{col_sep}{cpu_txt}{col_sep}{ram_txt}{col_sep}{ci_txt}{col_sep}{co_txt}{col_sep}{hs_txt}"
-
-    h1 = (
-        f"| {'Nodo'.ljust(nodo_w)}"
-        f"{cluster_sep_colored}{'Europa'.center(cluster_chunk_width)}"
-        f"{cluster_sep_colored}{'America'.center(cluster_chunk_width)}"
-        f"{cluster_sep_colored}{'Brasil'.center(cluster_chunk_width)}"
-        f"{cluster_sep_colored}{'Aplicaciones'.center(cluster_chunk_width)} |"
-    )
-
-    sub = (
-        f"{'Status'.center(st_w)}{col_sep}"
-        f"{'CPU'.center(cpu_w)}{col_sep}"
-        f"{'RAM'.center(ram_w)}{col_sep}"
-        f"{'CI'.center(ci_w)}{col_sep}"
-        f"{'CO'.center(co_w)}{col_sep}"
-        f"{'HS'.center(hs_w)}"
-    )
-
-    h2 = (
-        f"| {'':<{nodo_w}}"
-        f"{cluster_sep_colored}{sub}"
-        f"{cluster_sep_colored}{sub}"
-        f"{cluster_sep_colored}{sub}"
-        f"{cluster_sep_colored}{sub} |"
-    )
-
-    sep = "-" * (2 + nodo_w + (len(cluster_sep_plain) + cluster_chunk_width) * 4 + 2)
-
-    print(h1)
-    print(h2)
-    print(sep)
-
-    for nodo in nodos:
-        line = f"| {nodo.ljust(nodo_w)}"
-        for cluster in cluster_order:
-            r = current_data.get(cluster, {}).get(nodo)
-            prev_q = previous_data.get(cluster, {}).get(nodo, r.encolados if r else 0)
-            line += f"{cluster_sep_colored}{fmt_chunk(r, prev_q)}"
-        line += " |"
-        print(line)
-
-
-def print_rates_table(
-    current_data: Dict[str, Dict[str, Result]],
-    previous_data: Dict[str, Dict[str, int]],
-) -> None:
-    print("RENDIMIENTO OPERATIVO POR CLUSTER\n")
-
-    term_w = terminal_width(180)
-    nodos = [f"ESA{i:02d}" for i in range(1, 21)]
-
-    headers = [
-        ("cluster", "Cluster"),
-        ("in", "MSG In"),
-        ("out", "Recipient Out"),
-        ("rec", "Recipient In"),
-        ("comp", "Recipient Proc"),
-        ("active", "Active Rcpt"),
-        ("bnc", "Bounce Temp"),
-        ("cola", "Cola"),
-        ("trend", "Tendencia"),
-    ]
-
-    rows = []
-    for group in GROUPS:
-        cluster = group["cluster"]
-        nodo_map = current_data.get(cluster, {})
-        prev_map = previous_data.get(cluster, {})
-
-        total_in_1m = sum(r.inj_msgs_1m for r in nodo_map.values())
-        total_in_5m = sum(r.inj_msgs_5m for r in nodo_map.values())
-        total_out_1m = sum(r.delivered_recips_1m for r in nodo_map.values())
-        total_rec_1m = sum(r.inj_recips_1m for r in nodo_map.values())
-        total_comp_1m = sum(r.completed_recips_1m for r in nodo_map.values())
-        total_comp_5m = sum(r.completed_recips_5m for r in nodo_map.values())
-        total_comp_15m = sum(r.completed_recips_15m for r in nodo_map.values())
-        total_active = sum(r.active_recips for r in nodo_map.values())
-        total_bnc_1m = sum(r.soft_bounced_evts_1m for r in nodo_map.values())
-
-        total_cur_q = sum(r.encolados for r in nodo_map.values())
-        total_prev_q = sum(prev_map.get(n, nodo_map.get(n).encolados if nodo_map.get(n) else 0) for n in nodos)
-        delta_q = total_cur_q - total_prev_q
-
-        if delta_q >= ADV_THRESHOLDS["growth_critical"]:
-            cola_txt = f"{RED}+{fmt_num_dot(delta_q)} creciendo{RESET}"
-        elif delta_q >= ADV_THRESHOLDS["growth_warning"]:
-            cola_txt = f"{YELLOW}+{fmt_num_dot(delta_q)} subiendo{RESET}"
-        elif delta_q <= -ADV_THRESHOLDS["growth_critical"]:
-            cola_txt = f"{GREEN}{fmt_num_dot(delta_q)} drenando{RESET}"
-        elif delta_q <= -ADV_THRESHOLDS["growth_warning"]:
-            cola_txt = f"{GREEN}{fmt_num_dot(delta_q)} bajando{RESET}"
-        else:
-            cola_txt = "Estable"
-
-        active_txt = color_by_threshold(
-            fmt_num_dot(total_active),
-            total_active,
-            ADV_THRESHOLDS["active_recips_warning"],
-            ADV_THRESHOLDS["active_recips_warning"] * 2,
-        )
-
-        tendencia_txt = cluster_rate_tendency(
-            msg_in_1m=total_in_1m,
-            msg_in_5m=total_in_5m,
-            comp_1m=total_comp_1m,
-            comp_5m=total_comp_5m,
-            comp_15m=total_comp_15m,
-            queue_delta=delta_q,
-            active_recips=total_active,
-            bounce_1m=total_bnc_1m,
-        )
-
-        rows.append({
-            "cluster": cluster,
-            "in": fmt_num_dot(total_in_1m),
-            "out": fmt_num_dot(total_out_1m),
-            "rec": fmt_num_dot(total_rec_1m),
-            "comp": fmt_num_dot(total_comp_1m),
-            "active": active_txt,
-            "bnc": fmt_num_dot(total_bnc_1m),
-            "cola": cola_txt,
-            "trend": tendencia_txt,
-        })
-
-    natural_widths = {}
-    for key, title in headers:
-        max_len = len(title)
-        for row in rows:
-            max_len = max(max_len, visible_text_len(row[key]))
-        natural_widths[key] = max_len + 2
-
-    total_natural = sum(natural_widths[k] for k, _ in headers)
-
-    if total_natural <= term_w:
-        widths = natural_widths.copy()
-    else:
-        min_widths = {
-            "cluster": 10,
-            "in": 8,
-            "out": 10,
-            "rec": 10,
-            "comp": 10,
-            "active": 10,
-            "bnc": 9,
-            "cola": 12,
-            "trend": 18,
-        }
-
-        base_total = sum(min_widths.values())
-        available_extra = max(0, term_w - base_total)
-
-        extras_needed = {k: max(0, natural_widths[k] - min_widths[k]) for k, _ in headers}
-        extras_total = sum(extras_needed.values())
-
-        widths = min_widths.copy()
-
-        if extras_total > 0 and available_extra > 0:
-            allocated = {}
-            for k, _ in headers:
-                share = int(available_extra * (extras_needed[k] / extras_total))
-                allocated[k] = share
-                widths[k] += share
-
-            used = sum(allocated.values())
-            remainder = available_extra - used
-
-            priority = sorted([k for k, _ in headers], key=lambda x: extras_needed[x], reverse=True)
-            i = 0
-            while remainder > 0 and priority:
-                widths[priority[i % len(priority)]] += 1
-                remainder -= 1
-                i += 1
-
-    header = "".join(
-        title.ljust(widths[key]) if key == "cluster" else title.rjust(widths[key])
-        for key, title in headers
-    )
-    print(header)
-    print("-" * visible_text_len(header))
-
-    for row in rows:
-        line = (
-            f"{row['cluster']:<{widths['cluster']}}"
-            f"{ansi_rjust(row['in'], widths['in'])}"
-            f"{ansi_rjust(row['out'], widths['out'])}"
-            f"{ansi_rjust(row['rec'], widths['rec'])}"
-            f"{ansi_rjust(row['comp'], widths['comp'])}"
-            f"{ansi_rjust(row['active'], widths['active'])}"
-            f"{ansi_rjust(row['bnc'], widths['bnc'])}"
-            f"{ansi_rjust(row['cola'], widths['cola'])}"
-            f"{ansi_rjust(row['trend'], widths['trend'])}"
-        )
-        print(line)
+    return sorted(results, key=lambda r: r.nodo)
 
 
 # =========================================================
