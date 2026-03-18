@@ -5,7 +5,6 @@ import os
 import csv
 import time
 import threading
-import msvcrt
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Tuple
 from datetime import datetime, timedelta
@@ -14,6 +13,13 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
 import urllib3
+
+try:
+    import msvcrt  # Solo Windows
+    WINDOWS = True
+except ImportError:
+    msvcrt = None
+    WINDOWS = False
 
 
 CREDENTIALS_FILE = "credentials.env"
@@ -33,6 +39,8 @@ RED = "\033[91m"
 YELLOW = "\033[93m"
 GREEN = "\033[92m"
 ORANGE = "\033[38;5;208m"
+CYAN = "\033[96m"
+BOLD = "\033[1m"
 RESET = "\033[0m"
 
 GROUPS = [
@@ -102,7 +110,9 @@ ANSI_CODES = (
     "\033[91m",
     "\033[93m",
     "\033[92m",
+    "\033[96m",
     "\033[38;5;208m",
+    "\033[1m",
     "\033[0m",
 )
 
@@ -148,7 +158,12 @@ class Result:
 # =========================================================
 # HELPERS
 # =========================================================
+def clear_screen() -> None:
+    os.system("cls" if os.name == "nt" else "clear")
+
+
 def render_screen(render_fn) -> None:
+    clear_screen()
     render_fn()
 
 
@@ -173,6 +188,13 @@ def ansi_rjust(text: str, width: int) -> str:
     if len(plain) >= width:
         return text
     return (" " * (width - len(plain))) + text
+
+
+def ansi_ljust(text: str, width: int) -> str:
+    plain = strip_ansi(text)
+    if len(plain) >= width:
+        return text
+    return text + (" " * (width - len(plain)))
 
 
 def load_env_file(path: str) -> Dict[str, str]:
@@ -241,7 +263,7 @@ def total_status_colored(cluster: str, total: int) -> str:
     return f"{GREEN}{status}{RESET}"
 
 
-def print_orange_separator(width: int | None = None) -> None:
+def print_orange_separator(width: Optional[int] = None) -> None:
     if width is None:
         width = terminal_width(180)
     print(f"{ORANGE}{'═' * width}{RESET}")
@@ -317,13 +339,13 @@ def choose_three_col_widths(
 
     extra_available = available - sum(mins)
     if extra_available <= 0:
-        return tuple(mins)
+        return mins[0], mins[1], mins[2]
 
     extra_needs = [max(0, w - m) for w, m in zip(weights, mins)]
     total_extra_need = sum(extra_needs)
 
     if total_extra_need == 0:
-        return tuple(mins)
+        return mins[0], mins[1], mins[2]
 
     assigned = []
     for extra_need, min_w in zip(extra_needs, mins):
@@ -337,14 +359,17 @@ def choose_three_col_widths(
         diff -= 1
         i += 1
 
-    return tuple(assigned)
+    return assigned[0], assigned[1], assigned[2]
 
 
-def print_header_with_timer(title: str, next_refresh_time: datetime) -> None:
+def print_header_with_timer(title: str, next_refresh_time: datetime, remaining: Optional[int] = None) -> None:
     term_w = terminal_width(180)
-    timer_txt = f"Next update {next_refresh_time.strftime('%H:%M')}"
-    spaces = max(1, term_w - len(title) - len(timer_txt))
-    print(f"{title}{' ' * spaces}{timer_txt}\n")
+    if remaining is None:
+        timer_txt = f"Next update {next_refresh_time.strftime('%H:%M:%S')}"
+    else:
+        timer_txt = f"Next update {next_refresh_time.strftime('%H:%M:%S')} ({remaining}s)"
+    spaces = max(1, term_w - len(strip_ansi(title)) - len(strip_ansi(timer_txt)))
+    print(f"{BOLD}{title}{RESET}{' ' * spaces}{CYAN}{timer_txt}{RESET}\n")
 
 
 def health_score(r: Result, prev_queue: int) -> int:
@@ -400,7 +425,7 @@ def diagnose_node(r: Result, prev_queue: int) -> str:
     if r.error:
         return "Sin respuesta"
     if str(r.status).lower() != "online":
-        return f"Status={r.status}"
+        return "Status=" + str(r.status)
     if r.encolados >= ADV_THRESHOLDS["stuck_min_queue"] and r.conn_out <= ADV_THRESHOLDS["smtp_low_conn_out"]:
         return "Queue sin salida"
     if growth >= ADV_THRESHOLDS["growth_critical"] and r.conn_out >= ADV_THRESHOLDS["smtp_high_conn_out"]:
@@ -506,6 +531,19 @@ def cluster_rate_tendency(
     return "Actividad irregular"
 
 
+def get_prev_queue(previous_data: Dict[str, Dict[str, int]], cluster: str, nodo: str) -> int:
+    return previous_data.get(cluster, {}).get(nodo, 0)
+
+
+def all_results_sorted(current_data: Dict[str, Dict[str, Result]]) -> List[Result]:
+    rows: List[Result] = []
+    cluster_order = ["Europa", "America", "Brasil", "Aplicaciones"]
+    for cluster in cluster_order:
+        for nodo in sorted(current_data.get(cluster, {}).keys()):
+            rows.append(current_data[cluster][nodo])
+    return rows
+
+
 # =========================================================
 # PICOS HISTÓRICOS
 # =========================================================
@@ -541,7 +579,7 @@ def print_cluster_peaks_table(
     node_peaks: Dict[str, Dict[str, Dict[str, object]]],
     total_peaks: Dict[str, Dict[str, object]],
 ) -> None:
-    print("PICOS DE ENCOLADOS POR CLUSTER\n")
+    print(f"{BOLD}PICOS DE ENCOLADOS POR CLUSTER{RESET}\n")
 
     cluster_order = ["Europa", "America", "Brasil", "Aplicaciones"]
 
@@ -699,6 +737,8 @@ def persist_current_data_to_csv(current_data: Dict[str, Dict[str, Result]], now:
 # ESC LISTENER
 # =========================================================
 def esc_listener() -> None:
+    if not WINDOWS:
+        return
     while not stop_event.is_set():
         if msvcrt.kbhit():
             key = msvcrt.getch()
@@ -844,6 +884,8 @@ def fetch_one(
 
         except requests.exceptions.RequestException as e:
             last_err = str(e)
+        except ET.ParseError as e:
+            last_err = "XML ParseError: " + str(e)
 
     return Result(
         timestamp=timestamp,
@@ -898,6 +940,372 @@ def fetch_cluster(
 
 
 # =========================================================
+# RENDER BLOQUES SUPERIORES
+# =========================================================
+def print_top_three_columns(
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+) -> None:
+    alerts: List[str] = []
+    risks: List[str] = []
+    summary: List[str] = []
+
+    cluster_order = ["Europa", "America", "Brasil", "Aplicaciones"]
+
+    for cluster in cluster_order:
+        nodo_map = current_data.get(cluster, {})
+        total = sum(r.encolados for r in nodo_map.values())
+        online = sum(1 for r in nodo_map.values() if str(r.status).lower() == "online" and not r.error)
+        errors = sum(1 for r in nodo_map.values() if r.error)
+
+        summary.append(
+            "{} {} total={} estado={} online={}/20 errores={}".format(
+                cluster.ljust(12),
+                total_status_colored(cluster, total),
+                fmt_num_dot(total).rjust(8),
+                total_status_text(cluster, total).ljust(8),
+                str(online).rjust(2),
+                str(errors).rjust(2),
+            )
+        )
+
+        for nodo, r in sorted(nodo_map.items()):
+            prev = get_prev_queue(previous_data, cluster, nodo)
+            diag = diagnose_node(r, prev)
+
+            if r.error:
+                alerts.append(natural_alert_text(cluster, nodo, r, "error"))
+                continue
+
+            th = CLUSTER_THRESHOLDS[cluster]
+            if r.encolados >= th["critical"]:
+                alerts.append(natural_alert_text(cluster, nodo, r, "critical"))
+            elif r.encolados >= th["warning"]:
+                alerts.append(natural_alert_text(cluster, nodo, r, "warning"))
+
+            if diag != "OK" and diag not in ("Sin respuesta",):
+                risks.append(natural_risk_text(cluster, nodo, diag))
+
+    if not alerts:
+        alerts = [f"{GREEN}Sin alertas de cola relevantes{RESET}"]
+    if not risks:
+        risks = [f"{GREEN}Sin riesgos adicionales destacados{RESET}"]
+
+    alerts = alerts[:8]
+    risks = risks[:8]
+    summary = summary[:8]
+
+    col1_lines = [f"{BOLD}ALERTAS DE COLA{RESET}"] + alerts
+    col2_lines = [f"{BOLD}RIESGOS OPERATIVOS{RESET}"] + risks
+    col3_lines = [f"{BOLD}RESUMEN POR CLUSTER{RESET}"] + summary
+
+    w1, w2, w3 = choose_three_col_widths(col1_lines, col2_lines, col3_lines, 44, 40, 42)
+
+    max_rows = max(len(col1_lines), len(col2_lines), len(col3_lines))
+    for i in range(max_rows):
+        c1 = pad_or_trim(col1_lines[i], w1) if i < len(col1_lines) else " " * w1
+        c2 = pad_or_trim(col2_lines[i], w2) if i < len(col2_lines) else " " * w2
+        c3 = pad_or_trim(col3_lines[i], w3) if i < len(col3_lines) else " " * w3
+        print(f"{c1}   {c2}   {c3}")
+
+
+# =========================================================
+# TABLA DE COLAS
+# =========================================================
+def print_queue_table(
+    timestamp: str,
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+) -> None:
+    print(f"{BOLD}COLAS POR NODO ({timestamp}){RESET}\n")
+
+    headers = [
+        ("Cluster", 13),
+        ("Nodo", 6),
+        ("Status", 10),
+        ("Queue", 10),
+        ("Δ", 8),
+        ("Trend", 5),
+        ("CPU", 6),
+        ("RAM", 6),
+        ("In", 8),
+        ("Out", 8),
+        ("ActRec", 10),
+    ]
+
+    header_line = " | ".join(h[0].ljust(h[1]) for h in headers)
+    sep = "-" * len(header_line)
+
+    print(header_line)
+    print(sep)
+
+    cluster_order = ["Europa", "America", "Brasil", "Aplicaciones"]
+    for cluster in cluster_order:
+        for nodo in sorted(current_data.get(cluster, {}).keys()):
+            r = current_data[cluster][nodo]
+            prev = get_prev_queue(previous_data, cluster, nodo)
+            delta = r.encolados - prev
+            trend = trend_symbol(prev, r.encolados)
+
+            queue_txt = queue_color(cluster, fmt_num_dot(r.encolados).rjust(10), r.encolados)
+            delta_txt = "{:+}".format(delta)
+            if delta >= ADV_THRESHOLDS["growth_critical"]:
+                delta_txt = f"{RED}{delta_txt}{RESET}"
+            elif delta >= ADV_THRESHOLDS["growth_warning"]:
+                delta_txt = f"{YELLOW}{delta_txt}{RESET}"
+            elif delta < 0:
+                delta_txt = f"{GREEN}{delta_txt}{RESET}"
+
+            status = r.status if not r.error else "offline"
+            status_txt = status
+            if r.error or str(status).lower() != "online":
+                status_txt = f"{RED}{status}{RESET}"
+            else:
+                status_txt = f"{GREEN}{status}{RESET}"
+
+            cpu_txt = color_by_threshold(str(r.cpu).rjust(3) + "%", r.cpu, ADV_THRESHOLDS["cpu_warning"], ADV_THRESHOLDS["cpu_critical"])
+            ram_txt = color_by_threshold(str(r.ram).rjust(3) + "%", r.ram, ADV_THRESHOLDS["ram_warning"], ADV_THRESHOLDS["ram_critical"])
+            out_txt = color_by_threshold(fmt_num_dot(r.conn_out).rjust(8), r.conn_out, ADV_THRESHOLDS["conn_warning"], ADV_THRESHOLDS["conn_critical"])
+
+            row = [
+                cluster.ljust(13),
+                nodo.ljust(6),
+                ansi_ljust(status_txt, 10),
+                ansi_rjust(queue_txt, 10),
+                ansi_rjust(delta_txt, 8),
+                trend.center(5),
+                ansi_rjust(cpu_txt, 6),
+                ansi_rjust(ram_txt, 6),
+                fmt_num_dot(r.conn_in).rjust(8),
+                ansi_rjust(out_txt, 8),
+                fmt_num_dot(r.active_recips).rjust(10),
+            ]
+            print(" | ".join(row))
+
+
+# =========================================================
+# SALUD DE NODOS
+# =========================================================
+def print_node_health_table(
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+) -> None:
+    print(f"{BOLD}SALUD DE NODOS{RESET}\n")
+
+    headers = [
+        ("Cluster", 13),
+        ("Nodo", 6),
+        ("Score", 7),
+        ("Diagnóstico", 24),
+        ("Queue", 10),
+        ("CPU", 6),
+        ("RAM", 6),
+        ("Out", 8),
+    ]
+
+    header_line = " | ".join(h[0].ljust(h[1]) for h in headers)
+    sep = "-" * len(header_line)
+    print(header_line)
+    print(sep)
+
+    rows = []
+    for r in all_results_sorted(current_data):
+        prev = get_prev_queue(previous_data, r.cluster, r.nodo)
+        score = health_score(r, prev)
+        diag = diagnose_node(r, prev)
+        rows.append((score, r, diag))
+
+    rows.sort(key=lambda x: x[0])
+
+    for score, r, diag in rows:
+        score_txt = health_color(str(score).rjust(3), score)
+        queue_txt = queue_color(r.cluster, fmt_num_dot(r.encolados).rjust(10), r.encolados)
+        cpu_txt = color_by_threshold(str(r.cpu).rjust(3) + "%", r.cpu, ADV_THRESHOLDS["cpu_warning"], ADV_THRESHOLDS["cpu_critical"])
+        ram_txt = color_by_threshold(str(r.ram).rjust(3) + "%", r.ram, ADV_THRESHOLDS["ram_warning"], ADV_THRESHOLDS["ram_critical"])
+        out_txt = color_by_threshold(fmt_num_dot(r.conn_out).rjust(8), r.conn_out, ADV_THRESHOLDS["conn_warning"], ADV_THRESHOLDS["conn_critical"])
+
+        row = [
+            r.cluster.ljust(13),
+            r.nodo.ljust(6),
+            ansi_rjust(score_txt, 7),
+            ansi_ljust(pad_or_trim(diag, 24), 24),
+            ansi_rjust(queue_txt, 10),
+            ansi_rjust(cpu_txt, 6),
+            ansi_rjust(ram_txt, 6),
+            ansi_rjust(out_txt, 8),
+        ]
+        print(" | ".join(row))
+
+
+# =========================================================
+# TABLA DE RATES
+# =========================================================
+def print_rates_table(
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+) -> None:
+    print(f"{BOLD}RATES Y TENDENCIAS{RESET}\n")
+
+    headers = [
+        ("Cluster", 13),
+        ("Nodo", 6),
+        ("inj1m", 9),
+        ("inj5m", 9),
+        ("comp1m", 9),
+        ("comp5m", 9),
+        ("deliv1m", 9),
+        ("bounce1m", 10),
+        ("Tendencia", 28),
+    ]
+
+    header_line = " | ".join(h[0].ljust(h[1]) for h in headers)
+    sep = "-" * len(header_line)
+    print(header_line)
+    print(sep)
+
+    for r in all_results_sorted(current_data):
+        prev = get_prev_queue(previous_data, r.cluster, r.nodo)
+        queue_delta = r.encolados - prev
+        tendency = cluster_rate_tendency(
+            r.inj_msgs_1m,
+            r.inj_msgs_5m,
+            r.completed_recips_1m,
+            r.completed_recips_5m,
+            r.completed_recips_15m,
+            queue_delta,
+            r.active_recips,
+            r.soft_bounced_evts_1m,
+        )
+
+        row = [
+            r.cluster.ljust(13),
+            r.nodo.ljust(6),
+            fmt_num_dot(r.inj_msgs_1m).rjust(9),
+            fmt_num_dot(r.inj_msgs_5m).rjust(9),
+            fmt_num_dot(r.completed_recips_1m).rjust(9),
+            fmt_num_dot(r.completed_recips_5m).rjust(9),
+            fmt_num_dot(r.delivered_recips_1m).rjust(9),
+            fmt_num_dot(r.soft_bounced_evts_1m).rjust(10),
+            ansi_ljust(pad_or_trim(tendency, 28), 28),
+        ]
+        print(" | ".join(row))
+
+
+# =========================================================
+# INCIDENCIAS
+# =========================================================
+def print_status_incidents(current_data: Dict[str, Dict[str, Result]]) -> None:
+    print(f"{BOLD}INCIDENCIAS Y EVENTOS{RESET}\n")
+
+    incidents: List[str] = []
+
+    for r in all_results_sorted(current_data):
+        if r.error:
+            incidents.append(f"{RED}[ERROR]{RESET} {r.cluster}/{r.nodo}: {r.error}")
+            continue
+
+        if str(r.status).lower() != "online":
+            incidents.append(f"{YELLOW}[STATUS]{RESET} {r.cluster}/{r.nodo}: status={r.status}")
+
+        th = CLUSTER_THRESHOLDS[r.cluster]
+        if r.encolados >= th["critical"]:
+            incidents.append(f"{RED}[QUEUE]{RESET} {r.cluster}/{r.nodo}: {fmt_num_dot(r.encolados)} en cola")
+        elif r.encolados >= th["warning"]:
+            incidents.append(f"{YELLOW}[QUEUE]{RESET} {r.cluster}/{r.nodo}: {fmt_num_dot(r.encolados)} en cola")
+
+        if r.cpu >= ADV_THRESHOLDS["cpu_critical"]:
+            incidents.append(f"{RED}[CPU]{RESET} {r.cluster}/{r.nodo}: {r.cpu}%")
+        elif r.cpu >= ADV_THRESHOLDS["cpu_warning"]:
+            incidents.append(f"{YELLOW}[CPU]{RESET} {r.cluster}/{r.nodo}: {r.cpu}%")
+
+        if r.ram >= ADV_THRESHOLDS["ram_critical"]:
+            incidents.append(f"{RED}[RAM]{RESET} {r.cluster}/{r.nodo}: {r.ram}%")
+        elif r.ram >= ADV_THRESHOLDS["ram_warning"]:
+            incidents.append(f"{YELLOW}[RAM]{RESET} {r.cluster}/{r.nodo}: {r.ram}%")
+
+        if r.conn_out >= ADV_THRESHOLDS["conn_critical"]:
+            incidents.append(f"{RED}[SMTP OUT]{RESET} {r.cluster}/{r.nodo}: {fmt_num_dot(r.conn_out)}")
+        elif r.conn_out >= ADV_THRESHOLDS["conn_warning"]:
+            incidents.append(f"{YELLOW}[SMTP OUT]{RESET} {r.cluster}/{r.nodo}: {fmt_num_dot(r.conn_out)}")
+
+    if not incidents:
+        print(f"{GREEN}Sin incidencias detectadas{RESET}")
+        return
+
+    for line in incidents[:50]:
+        print(line)
+
+
+# =========================================================
+# HALLAZGOS AVANZADOS
+# =========================================================
+def print_advanced_findings(
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+    queue_history: Dict[str, Dict[str, List[int]]],
+) -> None:
+    print(f"{BOLD}HALLAZGOS AVANZADOS{RESET}\n")
+
+    findings: List[str] = []
+
+    for r in all_results_sorted(current_data):
+        prev = get_prev_queue(previous_data, r.cluster, r.nodo)
+        growth = r.encolados - prev
+        hist = queue_history.get(r.cluster, {}).get(r.nodo, [])
+
+        if len(hist) >= ADV_THRESHOLDS["stuck_cycles"]:
+            last = hist[-ADV_THRESHOLDS["stuck_cycles"]:]
+            if all(v >= ADV_THRESHOLDS["stuck_min_queue"] for v in last) and r.conn_out <= ADV_THRESHOLDS["smtp_low_conn_out"]:
+                findings.append(
+                    f"{RED}Cola atascada{RESET} en {r.cluster}/{r.nodo}: "
+                    f"{fmt_num_dot(r.encolados)} en cola y salida SMTP baja ({r.conn_out})"
+                )
+
+        if growth >= ADV_THRESHOLDS["growth_critical"]:
+            findings.append(
+                f"{RED}Crecimiento brusco{RESET} en {r.cluster}/{r.nodo}: "
+                f"{growth:+} respecto a la medición anterior"
+            )
+        elif growth >= ADV_THRESHOLDS["growth_warning"]:
+            findings.append(
+                f"{YELLOW}Crecimiento de cola{RESET} en {r.cluster}/{r.nodo}: "
+                f"{growth:+} respecto a la medición anterior"
+            )
+
+        if r.conn_out > 0:
+            imbalance = r.conn_in / float(r.conn_out)
+            if imbalance >= ADV_THRESHOLDS["imbalance_ratio_critical"]:
+                findings.append(
+                    f"{RED}Desequilibrio In/Out{RESET} en {r.cluster}/{r.nodo}: "
+                    f"ratio {imbalance:.2f} ({r.conn_in}/{r.conn_out})"
+                )
+            elif imbalance >= ADV_THRESHOLDS["imbalance_ratio_warning"]:
+                findings.append(
+                    f"{YELLOW}Desequilibrio In/Out{RESET} en {r.cluster}/{r.nodo}: "
+                    f"ratio {imbalance:.2f} ({r.conn_in}/{r.conn_out})"
+                )
+
+        if r.active_recips >= ADV_THRESHOLDS["active_recips_warning"] and r.completed_recips_1m < max(1, r.inj_recips_1m // 2):
+            findings.append(
+                f"{YELLOW}Alta carga de destinatarios{RESET} en {r.cluster}/{r.nodo}: "
+                f"active_recips={fmt_num_dot(r.active_recips)} con procesamiento bajo"
+            )
+
+        if r.soft_bounced_evts_1m >= 1000:
+            findings.append(
+                f"{YELLOW}Rebotes temporales elevados{RESET} en {r.cluster}/{r.nodo}: "
+                f"{fmt_num_dot(r.soft_bounced_evts_1m)} eventos en 1m"
+            )
+
+    if not findings:
+        print(f"{GREEN}Sin hallazgos avanzados relevantes{RESET}")
+        return
+
+    for line in findings[:50]:
+        print(line)
+
+
+# =========================================================
 # RUN
 # =========================================================
 def run_monitor(auth: Tuple[str, str]) -> None:
@@ -942,44 +1350,49 @@ def run_monitor(auth: Tuple[str, str]) -> None:
 
             next_refresh_time = datetime.now() + timedelta(seconds=REFRESH_SECONDS)
 
-            def draw():
-                print_header_with_timer("MONITOR COLAS ESA", next_refresh_time)
-
-                print_top_three_columns(current_data, previous_data)
-                print()
-
-                print_orange_separator()
-                print()
-                print_queue_table(timestamp, current_data, previous_data)
-
-                print()
-                print_cluster_peaks_table(node_peaks, total_peaks)
-
-                print()
-                print_orange_separator()
-                print()
-                print_node_health_table(current_data, previous_data)
-
-                print()
-                print_orange_separator()
-                print()
-                print_rates_table(current_data, previous_data)
-
-                print()
-                print_orange_separator()
-                print()
-                print_status_incidents(current_data)
-
-                print()
-                print_orange_separator()
-                print()
-                print_advanced_findings(current_data, previous_data, queue_history)
-
-                print(f"\nCSV mensuales en: {CSV_OUTPUT_DIR}")
-                print("Pulsa ESC para salir")
-
             remaining = REFRESH_SECONDS
             while remaining > 0 and not stop_event.is_set():
+                def draw():
+                    print_header_with_timer("MONITOR COLAS ESA", next_refresh_time, remaining)
+
+                    print_top_three_columns(current_data, previous_data)
+                    print()
+                    print_orange_separator()
+                    print()
+
+                    print_queue_table(timestamp, current_data, previous_data)
+                    print()
+                    print_orange_separator()
+                    print()
+
+                    print_cluster_peaks_table(node_peaks, total_peaks)
+                    print()
+                    print_orange_separator()
+                    print()
+
+                    print_node_health_table(current_data, previous_data)
+                    print()
+                    print_orange_separator()
+                    print()
+
+                    print_rates_table(current_data, previous_data)
+                    print()
+                    print_orange_separator()
+                    print()
+
+                    print_status_incidents(current_data)
+                    print()
+                    print_orange_separator()
+                    print()
+
+                    print_advanced_findings(current_data, previous_data, queue_history)
+
+                    print("\nCSV mensuales en: {}".format(CSV_OUTPUT_DIR))
+                    if WINDOWS:
+                        print("Pulsa ESC para salir")
+                    else:
+                        print("Pulsa Ctrl+C para salir")
+
                 render_screen(draw)
 
                 sleep_time = min(COUNTDOWN_STEP_SECONDS, remaining)
@@ -992,11 +1405,22 @@ def run_monitor(auth: Tuple[str, str]) -> None:
 
             previous_data = previous_data_snapshot
 
-    print("Monitor detenido (ESC pulsado)")
+    print("Monitor detenido")
 
 
 def main() -> None:
+    if not os.path.exists(CREDENTIALS_FILE):
+        raise FileNotFoundError(
+            "No existe el archivo '{}'. Debe contener GLOBAL_USERNAME y GLOBAL_PASSWORD".format(
+                CREDENTIALS_FILE
+            )
+        )
+
     creds = load_env_file(CREDENTIALS_FILE)
+
+    if "GLOBAL_USERNAME" not in creds or "GLOBAL_PASSWORD" not in creds:
+        raise KeyError("Faltan GLOBAL_USERNAME o GLOBAL_PASSWORD en credentials.env")
+
     auth = (creds["GLOBAL_USERNAME"], creds["GLOBAL_PASSWORD"])
 
     ensure_csv_dir()
@@ -1004,5 +1428,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
-    
+    try:
+        main()
+    except KeyboardInterrupt:
+        stop_event.set()
+        print("\nMonitor detenido por usuario")
