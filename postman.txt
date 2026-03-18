@@ -1061,10 +1061,8 @@ def print_queue_table(
         else:
             prev = get_prev_queue(previous_data, cluster, nodo)
             ant = fmt_num_dot(prev).rjust(ant_width)
-
             enc_txt = fmt_num_dot(r.encolados).rjust(enc_width)
             enc = queue_color(cluster, enc_txt, r.encolados)
-
             var = trend_symbol(prev, r.encolados).center(var_width)
 
             ac_txt = fmt_num_dot(r.active_recips)
@@ -1096,9 +1094,11 @@ def print_queue_table(
 
     header = "| Hora  | Nodo  " + "".join(cluster_header_block(c) for c in clusters) + "|"
     subhdr = "|       |       " + "".join(cluster_subheader_block() for _ in clusters) + "|"
+    sep = "-" * visible_text_len(subhdr)
 
     print(header)
     print(subhdr)
+    print(sep)
 
     for nodo in nodes:
         line = f"| {timestamp.ljust(5)} | {nodo.ljust(5)} " + "".join(
@@ -1106,6 +1106,7 @@ def print_queue_table(
         ) + "|"
         print(line)
 
+    print(sep)
     total_line = "|       | TOTAL " + "".join(cluster_total_block(cluster) for cluster in clusters) + "|"
     print(total_line)
 
@@ -1218,14 +1219,17 @@ def print_node_health_table(
 
     header = "| Nodo  " + "".join(cluster_header_block(c) for c in clusters) + "|"
     subhdr = "|       " + "".join(cluster_subheader_block() for _ in clusters) + "|"
+    sep = "-" * visible_text_len(subhdr)
 
     print(header)
     print(subhdr)
+    print(sep)
 
     for nodo in nodes:
         line = f"| {nodo.ljust(5)} " + "".join(cluster_data_block(cluster, nodo) for cluster in clusters) + "|"
         print(line)
 
+    print(sep)
 
 # =========================================================
 # RENDIMIENTO POR CLUSTER
