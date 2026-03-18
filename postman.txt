@@ -1039,13 +1039,21 @@ def print_queue_table(
     ant_width = 8
     enc_width = 9
     var_width = 3
-    ac_width = 9  # soporta 1.234.567
+    ac_width = 9  # 1.234.567
+
+    # Cabecera de bloque por cluster:
+    # "|| " + ant + " | " + enc + " | " + var + " | " + ac + " "
+    cluster_block_width = (
+        3 + ant_width +
+        3 + enc_width +
+        3 + var_width +
+        3 + ac_width + 1
+    )
 
     left_head = "| Hora  | Nodo  "
     cluster_head = []
     for c in clusters:
-        block_w = ant_width + enc_width + var_width + ac_width + 13
-        cluster_head.append(f"{orange_cluster_sep()} {c.center(block_w)} ")
+        cluster_head.append(f"{orange_cluster_sep()} {c.center(cluster_block_width - 1)} ")
     print(left_head + " ".join(cluster_head) + "|")
 
     sub = []
@@ -1055,9 +1063,9 @@ def print_queue_table(
             f"{'Anterior'.rjust(ant_width)} | "
             f"{'Encolados'.rjust(enc_width)} | "
             f"{'Var'.center(var_width)} | "
-            f"{'AC'.rjust(ac_width)}"
+            f"{'AC'.rjust(ac_width)} "
         )
-    print("|       |       " + " ".join(sub) + " |")
+    print("|       |       " + " ".join(sub) + "|")
 
     for nodo in nodes:
         line = f"| {timestamp.ljust(5)} | {nodo.ljust(5)} "
@@ -1087,9 +1095,9 @@ def print_queue_table(
                 f"{ant} | "
                 f"{ansi_rjust(enc, enc_width)} | "
                 f"{var.center(var_width)} | "
-                f"{ac}"
+                f"{ac} "
             )
-        line += " |"
+        line += "|"
         print(line)
 
     total_line = "|       | TOTAL "
@@ -1111,9 +1119,9 @@ def print_queue_table(
             f"{fmt_num_dot(total_prev).rjust(ant_width)} | "
             f"{ansi_rjust(total_cur_txt, enc_width)} | "
             f"{var.center(var_width)} | "
-            f"{ac_total_txt}"
+            f"{ac_total_txt} "
         )
-    total_line += " |"
+    total_line += "|"
     print(total_line)
 
 
@@ -1130,17 +1138,18 @@ def print_node_health_table(
     nodes = [f"ESA{i:02d}" for i in range(1, 21)]
 
     status_w = 6
-    metric_w = 5   # 4 dígitos + %
+    metric_w = 5   # permite 9999% o 100%
+    # "|| " + status + " | " + cpu + " | " + ram + " | " + ci + " | " + co + " | " + hs + " "
     block_w = (
-        status_w +
+        3 + status_w +
         3 + metric_w +
         3 + metric_w +
         3 + metric_w +
         3 + metric_w +
-        3 + metric_w
+        3 + metric_w + 1
     )
 
-    print("| Nodo  " + " ".join([f"{orange_cluster_sep()} {c.center(block_w)} " for c in clusters]) + "|")
+    print("| Nodo  " + " ".join([f"{orange_cluster_sep()} {c.center(block_w - 1)} " for c in clusters]) + "|")
     print(
         "|       " +
         " ".join([
@@ -1343,9 +1352,7 @@ def print_advanced_findings(
                     )
 
             if growth >= ADV_THRESHOLDS["growth_critical"]:
-                findings.append(
-                    f" - {cluster}/{r.nodo}: crecimiento brusco {growth:+}"
-                )
+                findings.append(f" - {cluster}/{r.nodo}: crecimiento brusco {growth:+}")
 
             if r.conn_out > 0:
                 imbalance = r.conn_in / float(r.conn_out)
