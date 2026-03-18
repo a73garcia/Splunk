@@ -1268,7 +1268,17 @@ def print_rates_table(
     ]
 
     # ====== HEADER ======
-    header_line = " ".join(h.ljust(w) for h, w in headers)
+    header_parts = []
+
+    for name, width in headers:
+        if name == "Cluster":
+            header_parts.append(name.ljust(width))  # texto izquierda
+        elif name == "Tendencia":
+            header_parts.append(name.ljust(width))  # ocupa resto → izquierda
+        else:
+            header_parts.append(name.rjust(width))  # números → derecha
+
+    header_line = " ".join(header_parts)
     sep = "-" * visible_text_len(header_line)
 
     print(header_line)
