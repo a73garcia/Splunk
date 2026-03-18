@@ -1029,25 +1029,34 @@ def print_queue_table(
     var_width = 3
     ac_width = 9
 
-    def cluster_subheader_block() -> str:
-        return (
-            f"{orange_cluster_sep()} "
-            f"{'Anterior'.rjust(ant_width)} | "
-            f"{'Encolados'.rjust(enc_width)} | "
-            f"{'Var'.center(var_width)} | "
-            f"{'AC'.rjust(ac_width)} "
-        )
+    def make_state_block(ant: str, enc: str, var: str, ac: str) -> str:
+        return f"{orange_cluster_sep()} {ant} | {enc} | {var} | {ac} "
+
+    sample_block = make_state_block(
+        "0".rjust(ant_width),
+        "0".rjust(enc_width),
+        "=".center(var_width),
+        "0".rjust(ac_width),
+    )
+    block_visible = visible_text_len(sample_block)
 
     def cluster_header_block(name: str) -> str:
-        width = visible_text_len(cluster_subheader_block())
-        return f"{orange_cluster_sep()} {name.center(width - 3)} "
+        return f"{orange_cluster_sep()} {name.center(block_visible - 4)} "
+
+    def cluster_subheader_block() -> str:
+        return make_state_block(
+            "Anterior".rjust(ant_width),
+            "Encolados".rjust(enc_width),
+            "Var".center(var_width),
+            "AC".rjust(ac_width),
+        )
 
     def cluster_data_block(cluster: str, nodo: str) -> str:
         r = current_data.get(cluster, {}).get(nodo)
         if r is None:
             ant = "0".rjust(ant_width)
             enc = "0".rjust(enc_width)
-            var = "="
+            var = "=".center(var_width)
             ac = "0".rjust(ac_width)
         else:
             prev = get_prev_queue(previous_data, cluster, nodo)
@@ -1056,25 +1065,19 @@ def print_queue_table(
             enc_txt = fmt_num_dot(r.encolados).rjust(enc_width)
             enc = queue_color(cluster, enc_txt, r.encolados)
 
-            var = trend_symbol(prev, r.encolados)
+            var = trend_symbol(prev, r.encolados).center(var_width)
 
             ac_txt = fmt_num_dot(r.active_recips)
             if len(ac_txt) > ac_width:
                 ac_txt = ac_txt[-ac_width:]
             ac = ac_txt.rjust(ac_width)
 
-        return (
-            f"{orange_cluster_sep()} "
-            f"{ant} | "
-            f"{ansi_rjust(enc, enc_width)} | "
-            f"{var.center(var_width)} | "
-            f"{ac} "
-        )
+        return make_state_block(ant, enc, var, ac)
 
     def cluster_total_block(cluster: str) -> str:
         total_cur = sum(r.encolados for r in current_data.get(cluster, {}).values())
         total_prev = sum(previous_data.get(cluster, {}).values()) if cluster in previous_data else 0
-        var = trend_symbol(total_prev, total_cur)
+        var = trend_symbol(total_prev, total_cur).center(var_width)
         ac_total = sum(r.active_recips for r in current_data.get(cluster, {}).values())
 
         total_cur_txt = queue_color(cluster, fmt_num_dot(total_cur).rjust(enc_width), total_cur)
@@ -1084,12 +1087,11 @@ def print_queue_table(
             ac_total_txt = ac_total_txt[-ac_width:]
         ac_total_txt = ac_total_txt.rjust(ac_width)
 
-        return (
-            f"{orange_cluster_sep()} "
-            f"{fmt_num_dot(total_prev).rjust(ant_width)} | "
-            f"{ansi_rjust(total_cur_txt, enc_width)} | "
-            f"{var.center(var_width)} | "
-            f"{ac_total_txt} "
+        return make_state_block(
+            fmt_num_dot(total_prev).rjust(ant_width),
+            total_cur_txt,
+            var,
+            ac_total_txt,
         )
 
     header = "| Hora  | Nodo  " + "".join(cluster_header_block(c) for c in clusters) + "|"
@@ -1123,20 +1125,39 @@ def print_node_health_table(
     status_w = 6
     metric_w = 5
 
-    def cluster_subheader_block() -> str:
+    def make_health_block(status: str, cpu: str, ram: str, ci: str, co: str, hs: str) -> str:
         return (
             f"{orange_cluster_sep()} "
-            f"{'Status'.ljust(status_w)} | "
-            f"{'CPU'.rjust(metric_w)} | "
-            f"{'RAM'.rjust(metric_w)} | "
-            f"{'CI'.rjust(metric_w)} | "
-            f"{'CO'.rjust(metric_w)} | "
-            f"{'HS'.rjust(metric_w)} "
+            f"{status} | "
+            f"{cpu} | "
+            f"{ram} | "
+            f"{ci} | "
+            f"{co} | "
+            f"{hs} "
         )
 
+    sample_block = make_health_block(
+        "online".ljust(status_w),
+        "100%".rjust(metric_w),
+        "100%".rjust(metric_w),
+        "9999".rjust(metric_w),
+        "9999".rjust(metric_w),
+        "100%".rjust(metric_w),
+    )
+    block_visible = visible_text_len(sample_block)
+
     def cluster_header_block(name: str) -> str:
-        width = visible_text_len(cluster_subheader_block())
-        return f"{orange_cluster_sep()} {name.center(width - 3)} "
+        return f"{orange_cluster_sep()} {name.center(block_visible - 4)} "
+
+    def cluster_subheader_block() -> str:
+        return make_health_block(
+            "Status".ljust(status_w),
+            "CPU".rjust(metric_w),
+            "RAM".rjust(metric_w),
+            "CI".rjust(metric_w),
+            "CO".rjust(metric_w),
+            "HS".rjust(metric_w),
+        )
 
     def cluster_data_block(cluster: str, nodo: str) -> str:
         r = current_data.get(cluster, {}).get(nodo)
@@ -1186,14 +1207,13 @@ def print_node_health_table(
         if len(co_txt) > metric_w:
             co_txt = co_txt[-metric_w:]
 
-        return (
-            f"{orange_cluster_sep()} "
-            f"{ansi_ljust(status_txt, status_w)} | "
-            f"{ansi_rjust(cpu_txt, metric_w)} | "
-            f"{ansi_rjust(ram_txt, metric_w)} | "
-            f"{ci_txt.rjust(metric_w)} | "
-            f"{co_txt.rjust(metric_w)} | "
-            f"{ansi_rjust(hs_txt, metric_w)} "
+        return make_health_block(
+            ansi_ljust(status_txt, status_w),
+            ansi_rjust(cpu_txt, metric_w),
+            ansi_rjust(ram_txt, metric_w),
+            ci_txt.rjust(metric_w),
+            co_txt.rjust(metric_w),
+            ansi_rjust(hs_txt, metric_w),
         )
 
     header = "| Nodo  " + "".join(cluster_header_block(c) for c in clusters) + "|"
