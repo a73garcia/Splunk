@@ -1240,8 +1240,41 @@ def print_rates_table(
 ) -> None:
     print("RENDIMIENTO OPERATIVO POR CLUSTER\n")
 
-    print("Cluster        MSG In   Recipient Out   Recipient In   Recipient Proc   Active Rcpt   Bounce Temp   Cola        Tendencia")
+    # ====== ANCHOS ======
+    cluster_w = 13
+    num_w = 8   # 👈 ahora 8 dígitos
 
+    term_w = terminal_width(180)
+
+    # cálculo dinámico del ancho de tendencia
+    fixed_width = (
+        cluster_w +
+        (num_w * 7) +   # 7 columnas numéricas
+        8               # espacios entre columnas
+    )
+
+    tendencia_w = max(20, term_w - fixed_width)
+
+    headers = [
+        ("Cluster", cluster_w),
+        ("MSG In", num_w),
+        ("Rec Out", num_w),
+        ("Rec In", num_w),
+        ("Rec Proc", num_w),
+        ("Active", num_w),
+        ("Bounce", num_w),
+        ("Cola", num_w),
+        ("Tendencia", tendencia_w),
+    ]
+
+    # ====== HEADER ======
+    header_line = " ".join(h.ljust(w) for h, w in headers)
+    sep = "-" * visible_text_len(header_line)
+
+    print(header_line)
+    print(sep)
+
+    # ====== DATA ======
     for cluster in cluster_order():
         rows = list(current_data.get(cluster, {}).values())
         if not rows:
@@ -1269,19 +1302,33 @@ def print_rates_table(
             bounce,
         )
 
-        cola_txt = queue_color(cluster, fmt_num_dot(cola).rjust(8), cola)
+        # ====== FORMATEO NUMÉRICO ======
+        def fmt(n: int) -> str:
+            txt = fmt_num_dot(n)
+            if len(txt) > num_w:
+                txt = txt[-num_w:]  # recorte seguro
+            return txt.rjust(num_w)
 
-        print(
-            f"{cluster.ljust(13)} "
-            f"{fmt_num_dot(msg_in).rjust(8)}   "
-            f"{fmt_num_dot(rec_out).rjust(13)}   "
-            f"{fmt_num_dot(rec_in).rjust(12)}   "
-            f"{fmt_num_dot(rec_proc).rjust(14)}   "
-            f"{fmt_num_dot(active).rjust(11)}   "
-            f"{fmt_num_dot(bounce).rjust(11)}   "
-            f"{ansi_rjust(cola_txt, 8)}   "
-            f"{tendency}"
+        cola_txt = queue_color(cluster, fmt(cola), cola)
+
+        # ====== TENDENCIA DINÁMICA ======
+        tendency_txt = pad_or_trim(tendency, tendencia_w)
+
+        line = (
+            f"{cluster.ljust(cluster_w)} "
+            f"{fmt(msg_in)} "
+            f"{fmt(rec_out)} "
+            f"{fmt(rec_in)} "
+            f"{fmt(rec_proc)} "
+            f"{fmt(active)} "
+            f"{fmt(bounce)} "
+            f"{ansi_rjust(cola_txt, num_w)} "
+            f"{tendency_txt}"
         )
+
+        print(line)
+
+    print(sep)
 
 
 # =========================================================
