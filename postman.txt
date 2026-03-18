@@ -191,15 +191,6 @@ def visible_text_len(text: str) -> int:
     return len(strip_ansi(str(text)))
 
 
-def ansi_center(text: str, width: int) -> str:
-    plain = strip_ansi(text)
-    if len(plain) >= width:
-        return text
-    left = (width - len(plain)) // 2
-    right = width - len(plain) - left
-    return (" " * left) + text + (" " * right)
-
-
 def ansi_rjust(text: str, width: int) -> str:
     plain = strip_ansi(text)
     if len(plain) >= width:
@@ -1038,17 +1029,6 @@ def print_queue_table(
     var_width = 3
     ac_width = 9
 
-    def cluster_header_block(name: str) -> str:
-        sample = (
-            f"{orange_cluster_sep()} "
-            f"{' ' * ant_width} | "
-            f"{' ' * enc_width} | "
-            f"{' ' * var_width} | "
-            f"{' ' * ac_width} "
-        )
-        width = visible_text_len(sample)
-        return f"{orange_cluster_sep()} {name.center(width - 3)} "
-
     def cluster_subheader_block() -> str:
         return (
             f"{orange_cluster_sep()} "
@@ -1057,6 +1037,10 @@ def print_queue_table(
             f"{'Var'.center(var_width)} | "
             f"{'AC'.rjust(ac_width)} "
         )
+
+    def cluster_header_block(name: str) -> str:
+        width = visible_text_len(cluster_subheader_block())
+        return f"{orange_cluster_sep()} {name.center(width - 3)} "
 
     def cluster_data_block(cluster: str, nodo: str) -> str:
         r = current_data.get(cluster, {}).get(nodo)
@@ -1108,7 +1092,7 @@ def print_queue_table(
             f"{ac_total_txt} "
         )
 
-    header = "| Hora  | Nodo  " + " ".join(cluster_header_block(c) for c in clusters) + "|"
+    header = "| Hora  | Nodo  " + "".join(cluster_header_block(c) for c in clusters) + "|"
     subhdr = "|       |       " + "".join(cluster_subheader_block() for _ in clusters) + "|"
 
     print(header)
@@ -1138,19 +1122,9 @@ def print_node_health_table(
 
     status_w = 6
     metric_w = 5
-    block_w = (
-        3 + status_w +
-        3 + metric_w +
-        3 + metric_w +
-        3 + metric_w +
-        3 + metric_w +
-        3 + metric_w + 1
-    )
 
-    print("| Nodo  " + " ".join([f"{orange_cluster_sep()} {c.center(block_w - 3)} " for c in clusters]) + "|")
-    print(
-        "|       " +
-        "".join([
+    def cluster_subheader_block() -> str:
+        return (
             f"{orange_cluster_sep()} "
             f"{'Status'.ljust(status_w)} | "
             f"{'CPU'.rjust(metric_w)} | "
@@ -1158,72 +1132,78 @@ def print_node_health_table(
             f"{'CI'.rjust(metric_w)} | "
             f"{'CO'.rjust(metric_w)} | "
             f"{'HS'.rjust(metric_w)} "
-            for _ in clusters
-        ]) +
-        "|"
-    )
+        )
+
+    def cluster_header_block(name: str) -> str:
+        width = visible_text_len(cluster_subheader_block())
+        return f"{orange_cluster_sep()} {name.center(width - 3)} "
+
+    def cluster_data_block(cluster: str, nodo: str) -> str:
+        r = current_data.get(cluster, {}).get(nodo)
+
+        if r is None:
+            status_txt = f"{RED}offline{RESET}"
+            cpu = 0
+            ram = 0
+            ci = 0
+            co = 0
+            hs = 0
+        else:
+            prev = get_prev_queue(previous_data, cluster, nodo)
+            hs = health_score(r, prev)
+
+            if r.error:
+                status_txt = f"{RED}offline{RESET}"
+            elif str(r.status).lower() == "online":
+                status_txt = f"{GREEN}online{RESET}"
+            else:
+                status_txt = f"{YELLOW}{r.status}{RESET}"
+
+            cpu = r.cpu
+            ram = r.ram
+            ci = r.conn_in
+            co = r.conn_out
+
+        cpu_str = f"{cpu}%"
+        ram_str = f"{ram}%"
+        hs_str = f"{hs}%"
+
+        if len(cpu_str) > metric_w:
+            cpu_str = cpu_str[:metric_w]
+        if len(ram_str) > metric_w:
+            ram_str = ram_str[:metric_w]
+        if len(hs_str) > metric_w:
+            hs_str = hs_str[:metric_w]
+
+        cpu_txt = color_by_threshold(cpu_str.rjust(metric_w), cpu, ADV_THRESHOLDS["cpu_warning"], ADV_THRESHOLDS["cpu_critical"])
+        ram_txt = color_by_threshold(ram_str.rjust(metric_w), ram, ADV_THRESHOLDS["ram_warning"], ADV_THRESHOLDS["ram_critical"])
+        hs_txt = health_color_text(hs, hs_str.rjust(metric_w))
+
+        ci_txt = fmt_num_dot(ci)
+        co_txt = fmt_num_dot(co)
+        if len(ci_txt) > metric_w:
+            ci_txt = ci_txt[-metric_w:]
+        if len(co_txt) > metric_w:
+            co_txt = co_txt[-metric_w:]
+
+        return (
+            f"{orange_cluster_sep()} "
+            f"{ansi_ljust(status_txt, status_w)} | "
+            f"{ansi_rjust(cpu_txt, metric_w)} | "
+            f"{ansi_rjust(ram_txt, metric_w)} | "
+            f"{ci_txt.rjust(metric_w)} | "
+            f"{co_txt.rjust(metric_w)} | "
+            f"{ansi_rjust(hs_txt, metric_w)} "
+        )
+
+    header = "| Nodo  " + "".join(cluster_header_block(c) for c in clusters) + "|"
+    subhdr = "|       " + "".join(cluster_subheader_block() for _ in clusters) + "|"
+
+    print(header)
+    print(subhdr)
 
     for nodo in nodes:
-        line = f"| {nodo.ljust(5)} "
-        for cluster in clusters:
-            r = current_data.get(cluster, {}).get(nodo)
-
-            if r is None:
-                status_txt = f"{RED}offline{RESET}"
-                cpu = 0
-                ram = 0
-                ci = 0
-                co = 0
-                hs = 0
-            else:
-                prev = get_prev_queue(previous_data, cluster, nodo)
-                hs = health_score(r, prev)
-
-                if r.error:
-                    status_txt = f"{RED}offline{RESET}"
-                elif str(r.status).lower() == "online":
-                    status_txt = f"{GREEN}online{RESET}"
-                else:
-                    status_txt = f"{YELLOW}{r.status}{RESET}"
-
-                cpu = r.cpu
-                ram = r.ram
-                ci = r.conn_in
-                co = r.conn_out
-
-            cpu_str = f"{cpu}%"
-            ram_str = f"{ram}%"
-            hs_str = f"{hs}%"
-
-            if len(cpu_str) > metric_w:
-                cpu_str = cpu_str[:metric_w]
-            if len(ram_str) > metric_w:
-                ram_str = ram_str[:metric_w]
-            if len(hs_str) > metric_w:
-                hs_str = hs_str[:metric_w]
-
-            cpu_txt = color_by_threshold(cpu_str.rjust(metric_w), cpu, ADV_THRESHOLDS["cpu_warning"], ADV_THRESHOLDS["cpu_critical"])
-            ram_txt = color_by_threshold(ram_str.rjust(metric_w), ram, ADV_THRESHOLDS["ram_warning"], ADV_THRESHOLDS["ram_critical"])
-            hs_txt = health_color_text(hs, hs_str.rjust(metric_w))
-
-            ci_txt = fmt_num_dot(ci)
-            co_txt = fmt_num_dot(co)
-            if len(ci_txt) > metric_w:
-                ci_txt = ci_txt[-metric_w:]
-            if len(co_txt) > metric_w:
-                co_txt = co_txt[-metric_w:]
-
-            line += (
-                f"{orange_cluster_sep()} "
-                f"{ansi_ljust(status_txt, status_w)} | "
-                f"{ansi_rjust(cpu_txt, metric_w)} | "
-                f"{ansi_rjust(ram_txt, metric_w)} | "
-                f"{ci_txt.rjust(metric_w)} | "
-                f"{co_txt.rjust(metric_w)} | "
-                f"{ansi_rjust(hs_txt, metric_w)} "
-            )
-
-        line += "|"
+        line = f"| {nodo.ljust(5)} " + "".join(cluster_data_block(cluster, nodo) for cluster in clusters) + "|"
         print(line)
 
 
