@@ -32,7 +32,6 @@ TIMEOUT_SECONDS = 12
 MAX_WORKERS = 12
 RETRIES = 2
 REFRESH_SECONDS = 600
-COUNTDOWN_STEP_SECONDS = 10
 
 VERIFY_SSL = False
 if not VERIFY_SSL:
@@ -393,8 +392,6 @@ def get_prev_queue(previous_data: Dict[str, Dict[str, int]], cluster: str, nodo:
 def print_header_with_timer(title: str, next_refresh_time: datetime, remaining: Optional[int] = None) -> None:
     term_w = terminal_width(180)
     timer_txt = f"Next update {next_refresh_time.strftime('%H:%M:%S')}"
-    if remaining is not None:
-        timer_txt += f" ({remaining}s)"
     spaces = max(1, term_w - len(strip_ansi(title)) - len(strip_ansi(timer_txt)))
     print(f"{BOLD}{title}{RESET}{' ' * spaces}{CYAN}{timer_txt}{RESET}\n")
 
@@ -1039,69 +1036,58 @@ def print_queue_table(
     ant_width = 8
     enc_width = 9
     var_width = 3
-    ac_width = 9  # 1.234.567
+    ac_width = 9
 
-    # Cabecera de bloque por cluster:
-    # "|| " + ant + " | " + enc + " | " + var + " | " + ac + " "
-    cluster_block_width = (
-        3 + ant_width +
-        3 + enc_width +
-        3 + var_width +
-        3 + ac_width + 1
-    )
+    def cluster_header_block(name: str) -> str:
+        sample = (
+            f"{orange_cluster_sep()} "
+            f"{' ' * ant_width} | "
+            f"{' ' * enc_width} | "
+            f"{' ' * var_width} | "
+            f"{' ' * ac_width} "
+        )
+        width = visible_text_len(sample)
+        return f"{orange_cluster_sep()} {name.center(width - 3)} "
 
-    left_head = "| Hora  | Nodo  "
-    cluster_head = []
-    for c in clusters:
-        cluster_head.append(f"{orange_cluster_sep()} {c.center(cluster_block_width - 1)} ")
-    print(left_head + " ".join(cluster_head) + "|")
-
-    sub = []
-    for _ in clusters:
-        sub.append(
+    def cluster_subheader_block() -> str:
+        return (
             f"{orange_cluster_sep()} "
             f"{'Anterior'.rjust(ant_width)} | "
             f"{'Encolados'.rjust(enc_width)} | "
             f"{'Var'.center(var_width)} | "
             f"{'AC'.rjust(ac_width)} "
         )
-    print("|       |       " + " ".join(sub) + "|")
 
-    for nodo in nodes:
-        line = f"| {timestamp.ljust(5)} | {nodo.ljust(5)} "
-        for cluster in clusters:
-            r = current_data.get(cluster, {}).get(nodo)
-            if r is None:
-                ant = "0".rjust(ant_width)
-                enc = "0".rjust(enc_width)
-                var = "="
-                ac = "0".rjust(ac_width)
-            else:
-                prev = get_prev_queue(previous_data, cluster, nodo)
-                ant = fmt_num_dot(prev).rjust(ant_width)
+    def cluster_data_block(cluster: str, nodo: str) -> str:
+        r = current_data.get(cluster, {}).get(nodo)
+        if r is None:
+            ant = "0".rjust(ant_width)
+            enc = "0".rjust(enc_width)
+            var = "="
+            ac = "0".rjust(ac_width)
+        else:
+            prev = get_prev_queue(previous_data, cluster, nodo)
+            ant = fmt_num_dot(prev).rjust(ant_width)
 
-                enc_txt = fmt_num_dot(r.encolados).rjust(enc_width)
-                enc = queue_color(cluster, enc_txt, r.encolados)
+            enc_txt = fmt_num_dot(r.encolados).rjust(enc_width)
+            enc = queue_color(cluster, enc_txt, r.encolados)
 
-                var = trend_symbol(prev, r.encolados)
+            var = trend_symbol(prev, r.encolados)
 
-                ac_txt = fmt_num_dot(r.active_recips)
-                if len(ac_txt) > ac_width:
-                    ac_txt = ac_txt[-ac_width:]
-                ac = ac_txt.rjust(ac_width)
+            ac_txt = fmt_num_dot(r.active_recips)
+            if len(ac_txt) > ac_width:
+                ac_txt = ac_txt[-ac_width:]
+            ac = ac_txt.rjust(ac_width)
 
-            line += (
-                f"{orange_cluster_sep()} "
-                f"{ant} | "
-                f"{ansi_rjust(enc, enc_width)} | "
-                f"{var.center(var_width)} | "
-                f"{ac} "
-            )
-        line += "|"
-        print(line)
+        return (
+            f"{orange_cluster_sep()} "
+            f"{ant} | "
+            f"{ansi_rjust(enc, enc_width)} | "
+            f"{var.center(var_width)} | "
+            f"{ac} "
+        )
 
-    total_line = "|       | TOTAL "
-    for cluster in clusters:
+    def cluster_total_block(cluster: str) -> str:
         total_cur = sum(r.encolados for r in current_data.get(cluster, {}).values())
         total_prev = sum(previous_data.get(cluster, {}).values()) if cluster in previous_data else 0
         var = trend_symbol(total_prev, total_cur)
@@ -1114,14 +1100,27 @@ def print_queue_table(
             ac_total_txt = ac_total_txt[-ac_width:]
         ac_total_txt = ac_total_txt.rjust(ac_width)
 
-        total_line += (
+        return (
             f"{orange_cluster_sep()} "
             f"{fmt_num_dot(total_prev).rjust(ant_width)} | "
             f"{ansi_rjust(total_cur_txt, enc_width)} | "
             f"{var.center(var_width)} | "
             f"{ac_total_txt} "
         )
-    total_line += "|"
+
+    header = "| Hora  | Nodo  " + " ".join(cluster_header_block(c) for c in clusters) + "|"
+    subhdr = "|       |       " + "".join(cluster_subheader_block() for _ in clusters) + "|"
+
+    print(header)
+    print(subhdr)
+
+    for nodo in nodes:
+        line = f"| {timestamp.ljust(5)} | {nodo.ljust(5)} " + "".join(
+            cluster_data_block(cluster, nodo) for cluster in clusters
+        ) + "|"
+        print(line)
+
+    total_line = "|       | TOTAL " + "".join(cluster_total_block(cluster) for cluster in clusters) + "|"
     print(total_line)
 
 
@@ -1138,8 +1137,7 @@ def print_node_health_table(
     nodes = [f"ESA{i:02d}" for i in range(1, 21)]
 
     status_w = 6
-    metric_w = 5   # permite 9999% o 100%
-    # "|| " + status + " | " + cpu + " | " + ram + " | " + ci + " | " + co + " | " + hs + " "
+    metric_w = 5
     block_w = (
         3 + status_w +
         3 + metric_w +
@@ -1149,10 +1147,10 @@ def print_node_health_table(
         3 + metric_w + 1
     )
 
-    print("| Nodo  " + " ".join([f"{orange_cluster_sep()} {c.center(block_w - 1)} " for c in clusters]) + "|")
+    print("| Nodo  " + " ".join([f"{orange_cluster_sep()} {c.center(block_w - 3)} " for c in clusters]) + "|")
     print(
         "|       " +
-        " ".join([
+        "".join([
             f"{orange_cluster_sep()} "
             f"{'Status'.ljust(status_w)} | "
             f"{'CPU'.rjust(metric_w)} | "
@@ -1414,58 +1412,53 @@ def run_monitor(auth: Tuple[str, str]) -> None:
 
             next_refresh_time = datetime.now() + timedelta(seconds=REFRESH_SECONDS)
 
-            remaining = REFRESH_SECONDS
-            while remaining > 0 and not stop_event.is_set():
-                def draw() -> None:
-                    print_header_with_timer("MONITOR COLAS ESA", next_refresh_time, remaining)
+            def draw() -> None:
+                print_header_with_timer("MONITOR COLAS ESA", next_refresh_time, None)
 
-                    print_summary_alerts_risk(current_data, previous_data)
-                    print()
-                    print_orange_separator()
-                    print()
+                print_summary_alerts_risk(current_data, previous_data)
+                print()
+                print_orange_separator()
+                print()
 
-                    print_queue_table(timestamp, current_data, previous_data)
-                    print()
-                    print_orange_separator()
-                    print()
+                print_queue_table(timestamp, current_data, previous_data)
+                print()
+                print_orange_separator()
+                print()
 
-                    print_cluster_peaks_table(node_peaks, total_peaks)
-                    print()
-                    print_orange_separator()
-                    print()
+                print_cluster_peaks_table(node_peaks, total_peaks)
+                print()
+                print_orange_separator()
+                print()
 
-                    print_node_health_table(current_data, previous_data)
-                    print()
-                    print_orange_separator()
-                    print()
+                print_node_health_table(current_data, previous_data)
+                print()
+                print_orange_separator()
+                print()
 
-                    print_rates_table(current_data, previous_data)
-                    print()
-                    print_orange_separator()
-                    print()
+                print_rates_table(current_data, previous_data)
+                print()
+                print_orange_separator()
+                print()
 
-                    print_status_incidents(current_data)
-                    print()
-                    print_orange_separator()
-                    print()
+                print_status_incidents(current_data)
+                print()
+                print_orange_separator()
+                print()
 
-                    print_advanced_findings(current_data, previous_data, queue_history)
+                print_advanced_findings(current_data, previous_data, queue_history)
 
-                    print(f"\nCSV mensuales en: {CSV_OUTPUT_DIR}")
-                    if WINDOWS:
-                        print("Pulsa ESC para salir")
-                    else:
-                        print("Pulsa Ctrl+C para salir")
+                print(f"\nCSV mensuales en: {CSV_OUTPUT_DIR}")
+                if WINDOWS:
+                    print("Pulsa ESC para salir")
+                else:
+                    print("Pulsa Ctrl+C para salir")
 
-                render_screen(draw)
+            render_screen(draw)
 
-                sleep_time = min(COUNTDOWN_STEP_SECONDS, remaining)
-                slept = 0.0
-                while slept < sleep_time and not stop_event.is_set():
-                    time.sleep(0.1)
-                    slept += 0.1
-
-                remaining -= sleep_time
+            slept = 0.0
+            while slept < REFRESH_SECONDS and not stop_event.is_set():
+                time.sleep(0.1)
+                slept += 0.1
 
             previous_data = previous_data_snapshot
 
