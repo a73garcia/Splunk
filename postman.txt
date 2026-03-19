@@ -31,7 +31,9 @@ CSV_OUTPUT_DIR = "csv_clusters"
 TIMEOUT_SECONDS = 12
 MAX_WORKERS = 12
 RETRIES = 2
-REFRESH_SECONDS = 600
+
+REFRESH_SECONDS_NORMAL = 600
+REFRESH_SECONDS_INCIDENT = 180
 
 VERIFY_SSL = False
 if not VERIFY_SSL:
@@ -373,16 +375,16 @@ def health_color_text(score: int, text: str) -> str:
 
 
 def cluster_order() -> List[str]:
-    return ["Europa", "Aplicaciones", "America", "Brasil"]
+    return ["Europa", "America", "Brasil", "Aplicaciones"]
 
 
 def get_prev_queue(previous_data: Dict[str, Dict[str, int]], cluster: str, nodo: str) -> int:
     return previous_data.get(cluster, {}).get(nodo, 0)
 
 
-def print_header_with_timer(title: str, next_refresh_time: datetime, remaining: Optional[int] = None) -> None:
+def print_header_with_timer(title: str, next_refresh_time: datetime, refresh_seconds: int) -> None:
     term_w = terminal_width(180)
-    timer_txt = f"Next update {next_refresh_time.strftime('%H:%M:%S')}"
+    timer_txt = f"Next update {next_refresh_time.strftime('%H:%M:%S')} ({refresh_seconds}s)"
     spaces = max(1, term_w - len(strip_ansi(title)) - len(strip_ansi(timer_txt)))
     print(f"{BOLD}{title}{RESET}{' ' * spaces}{CYAN}{timer_txt}{RESET}\n")
 
@@ -517,6 +519,29 @@ def cluster_rate_tendency(
     return "Estable"
 
 
+def has_incidents(current_data: Dict[str, Dict[str, Result]]) -> bool:
+    for cluster in cluster_order():
+        for nodo in current_data.get(cluster, {}):
+            r = current_data[cluster][nodo]
+
+            if r.error:
+                return True
+            if str(r.status).lower() != "online":
+                return True
+
+            th = CLUSTER_THRESHOLDS[cluster]
+            if r.encolados >= th["warning"]:
+                return True
+            if r.cpu >= ADV_THRESHOLDS["cpu_warning"]:
+                return True
+            if r.ram >= ADV_THRESHOLDS["ram_warning"]:
+                return True
+            if r.conn_out >= ADV_THRESHOLDS["conn_warning"]:
+                return True
+
+    return False
+
+
 # =========================================================
 # PICOS HISTORICOS
 # =========================================================
@@ -527,19 +552,29 @@ def update_cluster_peaks(
     timestamp: str,
 ) -> None:
     for cluster, nodo_map in current_data.items():
-        node_peaks.setdefault(cluster, {})
-        total_peaks.setdefault(cluster, {"total": 0, "hora": "--:--"})
+        if cluster not in node_peaks:
+            node_peaks[cluster] = {}
+
+        if cluster not in total_peaks:
+            total_peaks[cluster] = {"total": 0, "hora": "--:--"}
 
         total_cluster = 0
+
         for nodo, r in nodo_map.items():
             total_cluster += r.encolados
 
-            prev = node_peaks[cluster].get(nodo)
-            if prev is None or r.encolados > int(prev["encolados"]):
-                node_peaks[cluster][nodo] = {"hora": timestamp, "encolados": r.encolados}
+            prev_peak = node_peaks[cluster].get(nodo)
+            if prev_peak is None or r.encolados > int(prev_peak["encolados"]):
+                node_peaks[cluster][nodo] = {
+                    "hora": timestamp,
+                    "encolados": r.encolados,
+                }
 
         if total_cluster > int(total_peaks[cluster]["total"]):
-            total_peaks[cluster] = {"hora": timestamp, "total": total_cluster}
+            total_peaks[cluster] = {
+                "hora": timestamp,
+                "total": total_cluster,
+            }
 
 
 def print_cluster_peaks_table(
@@ -548,7 +583,7 @@ def print_cluster_peaks_table(
 ) -> None:
     print("PICOS DE ENCOLADOS POR CLUSTER\n")
 
-    cluster_order_list = ["Europa", "America", "Brasil", "Aplicaciones"]
+    clusters = cluster_order()
 
     row_w = 9
     hora_w = 5
@@ -558,15 +593,13 @@ def print_cluster_peaks_table(
     col_sep = " | "
     cluster_sep_plain = " || "
     cluster_sep_colored = f" {orange_cluster_sep()} "
+
     cluster_chunk_width = hora_w + len(col_sep) + nodo_w + len(col_sep) + enc_w
 
-    h1 = (
-        f"| {'Nivel'.ljust(row_w)}"
-        f"{cluster_sep_colored}{'Europa'.center(cluster_chunk_width)}"
-        f"{cluster_sep_colored}{'America'.center(cluster_chunk_width)}"
-        f"{cluster_sep_colored}{'Brasil'.center(cluster_chunk_width)}"
-        f"{cluster_sep_colored}{'Aplicaciones'.center(cluster_chunk_width)} |"
-    )
+    h1 = f"| {'Nivel'.ljust(row_w)}"
+    for cluster in clusters:
+        h1 += f"{cluster_sep_colored}{cluster.center(cluster_chunk_width)}"
+    h1 += " |"
 
     sub = (
         f"{'Hora'.center(hora_w)}{col_sep}"
@@ -574,51 +607,48 @@ def print_cluster_peaks_table(
         f"{'Encol.'.center(enc_w)}"
     )
 
-    h2 = (
-        f"| {'':<{row_w}}"
-        f"{cluster_sep_colored}{sub}"
-        f"{cluster_sep_colored}{sub}"
-        f"{cluster_sep_colored}{sub}"
-        f"{cluster_sep_colored}{sub} |"
-    )
+    h2 = f"| {'':<{row_w}}"
+    for _ in clusters:
+        h2 += f"{cluster_sep_colored}{sub}"
+    h2 += " |"
 
     sep = "-" * (
         2 + row_w +
-        (len(cluster_sep_plain) + cluster_chunk_width) * 4 + 2
+        (len(cluster_sep_plain) + cluster_chunk_width) * len(clusters) + 2
     )
 
     print(h1)
     print(h2)
     print(sep)
 
-    tops_by_cluster: Dict[str, List[Tuple[str, str, int]]] = {}
-    for cluster in cluster_order_list:
-        peaks = node_peaks.get(cluster, {})
-        ranking = sorted(
-            [(str(info["hora"]), nodo, int(info["encolados"])) for nodo, info in peaks.items()],
-            key=lambda x: x[2],
-            reverse=True,
-        )[:3]
-        tops_by_cluster[cluster] = ranking
+    ranking_by_cluster: Dict[str, List[Tuple[str, str, int]]] = {}
+    for cluster in clusters:
+        all_nodes = []
+        for nodo, info in node_peaks.get(cluster, {}).items():
+            all_nodes.append((str(info["hora"]), nodo, int(info["encolados"])))
+        all_nodes.sort(key=lambda x: x[2], reverse=True)
+        ranking_by_cluster[cluster] = all_nodes
 
     for pos in range(3):
         line = f"| {('TOP ' + str(pos + 1)).ljust(row_w)}"
-        for cluster in cluster_order_list:
-            ranking = tops_by_cluster.get(cluster, [])
+        for cluster in clusters:
+            ranking = ranking_by_cluster.get(cluster, [])
             if pos < len(ranking):
                 hora, nodo, encolados = ranking[pos]
                 enc_txt = queue_color(cluster, fmt_num_dot(encolados).rjust(enc_w), encolados)
                 chunk = f"{hora.ljust(hora_w)}{col_sep}{nodo.ljust(nodo_w)}{col_sep}{enc_txt}"
             else:
                 chunk = f"{'--:--'.ljust(hora_w)}{col_sep}{'-'.ljust(nodo_w)}{col_sep}{'0'.rjust(enc_w)}"
+
             line += f"{cluster_sep_colored}{chunk}"
+
         line += " |"
         print(line)
 
     print(sep)
 
     total_line = f"| {'TOTAL MAX'.ljust(row_w)}"
-    for cluster in cluster_order_list:
+    for cluster in clusters:
         info = total_peaks.get(cluster, {"hora": "--:--", "total": 0})
         hora = str(info["hora"])
         total = int(info["total"])
@@ -917,51 +947,35 @@ def fetch_cluster(
 # =========================================================
 # BLOQUE SUPERIOR
 # =========================================================
-def get_cluster_totals(current_data: Dict[str, Dict[str, Result]]) -> Dict[str, Dict[str, int]]:
-    out: Dict[str, Dict[str, int]] = {}
-    for cluster in cluster_order():
-        rows = list(current_data.get(cluster, {}).values())
-        total_queue = sum(r.encolados for r in rows)
-        online = sum(1 for r in rows if str(r.status).lower() == "online" and not r.error)
-        out[cluster] = {
-            "total_queue": total_queue,
-            "online": online,
-            "errors": sum(1 for r in rows if r.error),
-        }
-    return out
-
-
-def last_variation_text(
-    cluster: str,
-    current_data: Dict[str, Dict[str, Result]],
-    previous_data: Dict[str, Dict[str, int]],
-) -> str:
-    if cluster not in previous_data or not previous_data.get(cluster):
-        return "Sin histórico"
-
-    cur_total = sum(r.encolados for r in current_data.get(cluster, {}).values())
-    prev_total = sum(previous_data.get(cluster, {}).values())
-    delta = cur_total - prev_total
-
-    if delta > 0:
-        return f"+{fmt_num_dot(delta)}"
-    if delta < 0:
-        return f"{fmt_num_dot(delta)}"
-    return "="
-
-
 def print_summary_alerts_risk(
     current_data: Dict[str, Dict[str, Result]],
     previous_data: Dict[str, Dict[str, int]],
 ) -> None:
-    totals = get_cluster_totals(current_data)
+    totals = {}
+    for cluster in cluster_order():
+        rows = list(current_data.get(cluster, {}).values())
+        total_queue = sum(r.encolados for r in rows)
+        totals[cluster] = total_queue
 
     summary_lines = ["RESUMEN CLUSTERS", ""]
     summary_lines.append("Cluster       | Total | Estado   | Última variación")
     for cluster in cluster_order():
-        total = totals[cluster]["total_queue"]
+        total = totals[cluster]
         estado = total_status_colored(cluster, total)
-        last_var = last_variation_text(cluster, current_data, previous_data)
+
+        if cluster not in previous_data or not previous_data.get(cluster):
+            last_var = "Sin histórico"
+        else:
+            cur_total = sum(r.encolados for r in current_data.get(cluster, {}).values())
+            prev_total = sum(previous_data.get(cluster, {}).values())
+            delta = cur_total - prev_total
+            if delta > 0:
+                last_var = f"+{fmt_num_dot(delta)}"
+            elif delta < 0:
+                last_var = f"{fmt_num_dot(delta)}"
+            else:
+                last_var = "="
+
         summary_lines.append(
             f"{cluster.ljust(13)} | {fmt_num_dot(total).rjust(5)} | {ansi_ljust(estado, 8)} | {last_var}"
         )
@@ -1061,8 +1075,10 @@ def print_queue_table(
         else:
             prev = get_prev_queue(previous_data, cluster, nodo)
             ant = fmt_num_dot(prev).rjust(ant_width)
+
             enc_txt = fmt_num_dot(r.encolados).rjust(enc_width)
             enc = queue_color(cluster, enc_txt, r.encolados)
+
             var = trend_symbol(prev, r.encolados).center(var_width)
 
             ac_txt = fmt_num_dot(r.active_recips)
@@ -1123,7 +1139,7 @@ def print_node_health_table(
     clusters = cluster_order()
     nodes = [f"ESA{i:02d}" for i in range(1, 21)]
 
-    status_w = 6
+    status_w = 8
     metric_w = 5
 
     def make_health_block(status: str, cpu: str, ram: str, ci: str, co: str, hs: str) -> str:
@@ -1231,6 +1247,7 @@ def print_node_health_table(
 
     print(sep)
 
+
 # =========================================================
 # RENDIMIENTO POR CLUSTER
 # =========================================================
@@ -1240,19 +1257,16 @@ def print_rates_table(
 ) -> None:
     print("RENDIMIENTO OPERATIVO POR CLUSTER\n")
 
-    # ====== ANCHOS ======
     cluster_w = 13
-    num_w = 8   # 👈 ahora 8 dígitos
+    num_w = 8
 
     term_w = terminal_width(180)
 
-    # cálculo dinámico del ancho de tendencia
     fixed_width = (
         cluster_w +
-        (num_w * 7) +   # 7 columnas numéricas
-        8               # espacios entre columnas
+        (num_w * 7) +
+        8
     )
-
     tendencia_w = max(20, term_w - fixed_width)
 
     headers = [
@@ -1267,16 +1281,14 @@ def print_rates_table(
         ("Tendencia", tendencia_w),
     ]
 
-    # ====== HEADER ======
     header_parts = []
-
     for name, width in headers:
         if name == "Cluster":
-            header_parts.append(name.ljust(width))  # texto izquierda
+            header_parts.append(name.ljust(width))
         elif name == "Tendencia":
-            header_parts.append(name.ljust(width))  # ocupa resto → izquierda
+            header_parts.append(name.ljust(width))
         else:
-            header_parts.append(name.rjust(width))  # números → derecha
+            header_parts.append(name.rjust(width))
 
     header_line = " ".join(header_parts)
     sep = "-" * visible_text_len(header_line)
@@ -1284,7 +1296,6 @@ def print_rates_table(
     print(header_line)
     print(sep)
 
-    # ====== DATA ======
     for cluster in cluster_order():
         rows = list(current_data.get(cluster, {}).values())
         if not rows:
@@ -1312,16 +1323,13 @@ def print_rates_table(
             bounce,
         )
 
-        # ====== FORMATEO NUMÉRICO ======
         def fmt(n: int) -> str:
             txt = fmt_num_dot(n)
             if len(txt) > num_w:
-                txt = txt[-num_w:]  # recorte seguro
+                txt = txt[-num_w:]
             return txt.rjust(num_w)
 
         cola_txt = queue_color(cluster, fmt(cola), cola)
-
-        # ====== TENDENCIA DINÁMICA ======
         tendency_txt = pad_or_trim(tendency, tendencia_w)
 
         line = (
@@ -1335,7 +1343,6 @@ def print_rates_table(
             f"{ansi_rjust(cola_txt, num_w)} "
             f"{tendency_txt}"
         )
-
         print(line)
 
     print(sep)
@@ -1471,10 +1478,17 @@ def run_monitor(auth: Tuple[str, str]) -> None:
                 for c, m in current_data.items()
             }
 
-            next_refresh_time = datetime.now() + timedelta(seconds=REFRESH_SECONDS)
+            incidents_active = has_incidents(current_data)
+            refresh_seconds = REFRESH_SECONDS_INCIDENT if incidents_active else REFRESH_SECONDS_NORMAL
+            next_refresh_time = datetime.now() + timedelta(seconds=refresh_seconds)
 
             def draw() -> None:
-                print_header_with_timer("MONITOR COLAS ESA", next_refresh_time, None)
+                print_header_with_timer("MONITOR COLAS ESA", next_refresh_time, refresh_seconds)
+
+                if incidents_active:
+                    print(f"{YELLOW}Modo incidencias activo{RESET}\n")
+                else:
+                    print(f"{GREEN}Modo normal{RESET}\n")
 
                 print_summary_alerts_risk(current_data, previous_data)
                 print()
@@ -1517,7 +1531,7 @@ def run_monitor(auth: Tuple[str, str]) -> None:
             render_screen(draw)
 
             slept = 0.0
-            while slept < REFRESH_SECONDS and not stop_event.is_set():
+            while slept < refresh_seconds and not stop_event.is_set():
                 time.sleep(0.1)
                 slept += 0.1
 
