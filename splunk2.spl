@@ -1,4 +1,35 @@
-| eval order=case(
+index=siem-cloud-ciscoesa host="*.santandergroup-out.c3s2.iphmx.com" cef_6_header="Consolidated Log Event" cs1="*_OUT"
+| eval HoraE=strptime(start, "%a %b %d %H:%M:%S %Y"),
+       Horas=strptime(end, "%a %b %d %H:%M:%S %Y")
+| rename ESAMID AS MID
+         msg AS Asunto
+         cs4 AS MessageID
+         cs2 AS IP_Pais
+         user AS Sender
+         cs1 AS Politica
+         duser AS Recipient
+         cs3 AS Categoria
+         act AS Accion
+         cs6 AS Reputation
+         antivirus_verdict AS AV_Verdict
+         src_user_domain AS Domain
+         recipient_status AS Status
+         DMARC_verdict AS DMARC
+| eval ESA_Num=tonumber(replace(hostRaw,"esa","")),
+       Nodo=printf("ESA%02d", ESA_Num)
+| eval CES=case(
+    like(host, "%.santandergroup.c3s2.iphmx.com"), "EU",
+    like(host, "%.hc6154-33.iphmx.com"), "BR",
+    like(host, "%.hc5533-96.iphmx.com"), "APP DR",
+    like(host, "%.hc5532-55.iphmx.com"), "AM",
+    like(host, "%.santandergroup-out.c3s2.iphmx.com"), "APP"
+)
+| eval Recipient=split(Recipient, ";")
+| eval Dia=strftime(HoraE, "%d/%m/%y"),
+       Entrada=strftime(HoraE, "%H:%M"),
+       Salida=if(isnum(Horas), strftime(Horas, "%H:%M"), null())
+| eval QueueTime=if(isnum(HoraE) AND isnum(Horas) AND Horas>=HoraE, Horas-HoraE, null())
+| eval orden=case(
     QueueTime < 60, 1,
     QueueTime >= 60 AND QueueTime < 180, 2,
     QueueTime >= 180 AND QueueTime < 300, 3,
@@ -7,19 +38,28 @@
     QueueTime >= 1800 AND QueueTime < 3600, 6,
     QueueTime >= 3600, 7
 )
-
-| stats count by QueueRange order
+| eval QueueRange=case(
+    orden=1, "1. Menos de 1 min",
+    orden=2, "2. Hasta 3 min",
+    orden=3, "3. Hasta 5 min",
+    orden=4, "4. Hasta 10 min",
+    orden=5, "5. Hasta 30 min",
+    orden=6, "6. Hasta 1 hora",
+    orden=7, "7. Mas de 1 hora"
+)
+| stats count as total by orden QueueRange
 | append [
     | makeresults
-    | eval QueueRange="1. Menos de 1 min", order=1
-    | append [| makeresults | eval QueueRange="2. Hasta 3 min", order=2]
-    | append [| makeresults | eval QueueRange="3. Hasta 5 min", order=3]
-    | append [| makeresults | eval QueueRange="4. Hasta 10 min", order=4]
-    | append [| makeresults | eval QueueRange="5. Hasta 30 min", order=5]
-    | append [| makeresults | eval QueueRange="6. Hasta 1 hora", order=6]
-    | append [| makeresults | eval QueueRange="7. Mas de 1 hora", order=7]
+    | eval orden=1, QueueRange="1. Menos de 1 min", total=0
+    | append [| makeresults | eval orden=2, QueueRange="2. Hasta 3 min", total=0]
+    | append [| makeresults | eval orden=3, QueueRange="3. Hasta 5 min", total=0]
+    | append [| makeresults | eval orden=4, QueueRange="4. Hasta 10 min", total=0]
+    | append [| makeresults | eval orden=5, QueueRange="5. Hasta 30 min", total=0]
+    | append [| makeresults | eval orden=6, QueueRange="6. Hasta 1 hora", total=0]
+    | append [| makeresults | eval orden=7, QueueRange="7. Mas de 1 hora", total=0]
 ]
-| stats sum(count) as count by QueueRange order
+| stats sum(total) as count by orden QueueRange
 | fillnull value=0 count
-| sort order
+| sort 0 orden
 | eval count=tostring(count, "commas")
+| fields QueueRange count
