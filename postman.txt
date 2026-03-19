@@ -66,17 +66,17 @@ ANSI_CODES = (
 # CLUSTERS
 # =========================================================
 GROUPS = [
-    {"cluster": "Europa",       "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status"},
-    {"cluster": "America",      "pattern": "https://dh5504-esa{idx}.iphmx.com/xml/status"},
-    {"cluster": "Brasil",       "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status"},
-    {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status"},
+    {"cluster": "Europa",       "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status"   "start": 1, "end": 20},
+    {"cluster": "America",      "pattern": "https://dh5504-esa{idx}.iphmx.com/xml/status"       "start": 1, "end": 20},
+    {"cluster": "Brasil",       "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status"       "start": 1, "end": 20},
+    {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status"  "start": 1, "end": 20},
 ]
 
 CLUSTER_THRESHOLDS = {
-    "Europa":       {"warning": 50, "critical": 100, "total_warning": 200, "total_critical": 300},
-    "America":      {"warning": 50, "critical": 100, "total_warning": 200, "total_critical": 300},
-    "Brasil":       {"warning": 50, "critical": 100, "total_warning": 200, "total_critical": 300},
-    "Aplicaciones": {"warning": 20, "critical": 40,  "total_warning": 80,  "total_critical": 120},
+    "Europa":       {"warning": 500,  "critical": 3000,   "total_warning": 2000,   "total_critical": 10000},
+    "America":      {"warning": 500,  "critical": 3000,   "total_warning": 2000,   "total_critical": 10000},
+    "Brasil":       {"warning": 500,  "critical": 3000,   "total_warning": 2000,   "total_critical": 10000},
+    "Aplicaciones": {"warning": 1000, "critical": 15000,  "total_warning": 25000,  "total_critical": 80000},
 }
 
 ADV_THRESHOLDS = {
