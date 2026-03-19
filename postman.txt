@@ -554,15 +554,21 @@ def print_summary_alerts_risk(
         rows = list(current_data.get(cluster, {}).values())
         totals[cluster] = sum(r.encolados for r in rows)
 
+    cluster_w = 13
+    total_w = 9   # 7 dígitos + separadores de miles
+    estado_w = 8
+
     summary_lines = ["RESUMEN CLUSTERS", ""]
-    summary_lines.append("Cluster       | Total | Estado   | Ãltima variaciÃ³n")
+    summary_lines.append(
+        f"{'Cluster'.ljust(cluster_w)} | {'Total'.rjust(total_w)} | {'Estado'.ljust(estado_w)} | Última variación"
+    )
 
     for cluster in cluster_order():
         total = totals[cluster]
         estado = total_status_colored(cluster, total)
 
         if cluster not in previous_data or not previous_data.get(cluster):
-            last_var = "Sin histÃ³rico"
+            last_var = "Sin histórico"
         else:
             cur_total = sum(r.encolados for r in current_data.get(cluster, {}).values())
             prev_total = sum(previous_data.get(cluster, {}).values())
@@ -574,8 +580,12 @@ def print_summary_alerts_risk(
             else:
                 last_var = "="
 
+        total_txt = fmt_num_dot(total)
+        if len(total_txt) > total_w:
+            total_txt = total_txt[-total_w:]
+
         summary_lines.append(
-            f"{cluster.ljust(13)} | {fmt_num_dot(total).rjust(5)} | {ansi_ljust(estado, 8)} | {last_var}"
+            f"{cluster.ljust(cluster_w)} | {total_txt.rjust(total_w)} | {ansi_ljust(estado, estado_w)} | {last_var}"
         )
 
     alert_lines = ["ALERTAS NODOS", ""]
@@ -613,7 +623,7 @@ def print_summary_alerts_risk(
     else:
         risk_lines.extend(risks[:6])
 
-    w1, w2, w3 = choose_three_col_widths(summary_lines, alert_lines, risk_lines, 50, 34, 38)
+    w1, w2, w3 = choose_three_col_widths(summary_lines, alert_lines, risk_lines, 58, 34, 38)
 
     max_rows = max(len(summary_lines), len(alert_lines), len(risk_lines))
     for i in range(max_rows):
