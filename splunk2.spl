@@ -1,0 +1,25 @@
+| eval order=case(
+    QueueTime < 60, 1,
+    QueueTime >= 60 AND QueueTime < 180, 2,
+    QueueTime >= 180 AND QueueTime < 300, 3,
+    QueueTime >= 300 AND QueueTime < 600, 4,
+    QueueTime >= 600 AND QueueTime < 1800, 5,
+    QueueTime >= 1800 AND QueueTime < 3600, 6,
+    QueueTime >= 3600, 7
+)
+
+| stats count by QueueRange order
+| append [
+    | makeresults
+    | eval QueueRange="1. Menos de 1 min", order=1
+    | append [| makeresults | eval QueueRange="2. Hasta 3 min", order=2]
+    | append [| makeresults | eval QueueRange="3. Hasta 5 min", order=3]
+    | append [| makeresults | eval QueueRange="4. Hasta 10 min", order=4]
+    | append [| makeresults | eval QueueRange="5. Hasta 30 min", order=5]
+    | append [| makeresults | eval QueueRange="6. Hasta 1 hora", order=6]
+    | append [| makeresults | eval QueueRange="7. Mas de 1 hora", order=7]
+]
+| stats sum(count) as count by QueueRange order
+| fillnull value=0 count
+| sort order
+| eval count=tostring(count, "commas")
