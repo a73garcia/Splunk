@@ -1,8 +1,9 @@
-stop_event = threading.Event()
-
 TOTAL_SCREENS = 3
 current_screen = 0
 screen_lock = threading.Lock()
+stop_event = threading.Event()
+redraw_event = threading.Event()
+force_refresh_event = threading.Event()
 
 
 def esc_listener() -> None:
@@ -18,9 +19,17 @@ def esc_listener() -> None:
             # ESC
             if key == b"\x1b":
                 stop_event.set()
+                redraw_event.set()
+                force_refresh_event.set()
                 return
 
-            # Teclas especiales en Windows
+            # R / r = refresco inmediato
+            if key in (b"r", b"R"):
+                force_refresh_event.set()
+                redraw_event.set()
+                continue
+
+            # Teclas especiales
             if key in (b"\x00", b"\xe0"):
                 key2 = msvcrt.getch()
 
@@ -28,17 +37,28 @@ def esc_listener() -> None:
                     # Flecha izquierda
                     if key2 == b"K":
                         current_screen = (current_screen - 1) % TOTAL_SCREENS
+                        redraw_event.set()
 
                     # Flecha derecha
                     elif key2 == b"M":
                         current_screen = (current_screen + 1) % TOTAL_SCREENS
+                        redraw_event.set()
 
-        time.sleep(0.1)
+        time.sleep(0.05)
+
+
+
+def print_footer_help() -> None:
+    print(f"\nCSV mensuales en: {CSV_OUTPUT_DIR}")
+    if WINDOWS:
+        print("Pulsa ← / → para cambiar de pantalla | R para refrescar | ESC para salir")
+    else:
+        print("Pulsa Ctrl+C para salir")
+
+
 
 
 def run_monitor(auth: Tuple[str, str]) -> None:
-    global current_screen
-
     previous_data: Dict[str, Dict[str, int]] = {}
     queue_history: Dict[str, Dict[str, List[int]]] = {}
     node_peaks: Dict[str, Dict[str, Dict[str, object]]] = {}
@@ -49,6 +69,8 @@ def run_monitor(auth: Tuple[str, str]) -> None:
 
     with requests.Session() as session:
         while not stop_event.is_set():
+            force_refresh_event.clear()
+
             now = datetime.now()
             timestamp = now.strftime("%H:%M")
             current_data: Dict[str, Dict[str, Result]] = {}
@@ -73,21 +95,27 @@ def run_monitor(auth: Tuple[str, str]) -> None:
 
             update_cluster_peaks(current_data, node_peaks, total_peaks, timestamp)
 
-            previous_data_snapshot = {
-                c: {n: r.encolados for n, r in m.items()}
-                for c, m in current_data.items()
-            }
-
             incidents_active = has_incidents(current_data)
             refresh_seconds = REFRESH_SECONDS_INCIDENT if incidents_active else REFRESH_SECONDS_NORMAL
             next_refresh_time = datetime.now() + timedelta(seconds=refresh_seconds)
 
-            def draw() -> None:
-                with screen_lock:
-                    screen = current_screen
+            render_screen(lambda: draw_current_screen(
+                next_refresh_time,
+                refresh_seconds,
+                incidents_active,
+                timestamp,
+                current_data,
+                previous_data,
+                node_peaks,
+                total_peaks,
+                queue_history,
+            ))
 
-                if screen == 0:
-                    draw_screen_1(
+            start_wait = time.time()
+            while not stop_event.is_set():
+                if redraw_event.is_set():
+                    redraw_event.clear()
+                    render_screen(lambda: draw_current_screen(
                         next_refresh_time,
                         refresh_seconds,
                         incidents_active,
@@ -96,51 +124,30 @@ def run_monitor(auth: Tuple[str, str]) -> None:
                         previous_data,
                         node_peaks,
                         total_peaks,
-                    )
-                elif screen == 1:
-                    draw_screen_2(
-                        next_refresh_time,
-                        refresh_seconds,
-                        incidents_active,
-                        current_data,
-                        previous_data,
-                    )
-                else:
-                    draw_screen_3(
-                        next_refresh_time,
-                        refresh_seconds,
-                        incidents_active,
-                        current_data,
-                        previous_data,
                         queue_history,
-                    )
+                    ))
 
-            render_screen(draw)
+                if force_refresh_event.is_set():
+                    break
 
-            slept = 0.0
-            while slept < refresh_seconds and not stop_event.is_set():
+                elapsed = time.time() - start_wait
+                if elapsed >= refresh_seconds:
+                    break
+
                 time.sleep(0.1)
-                slept += 0.1
 
-            previous_data = previous_data_snapshot
+            previous_data = {
+                c: {n: r.encolados for n, r in m.items()}
+                for c, m in current_data.items()
+            }
 
     print("Monitor detenido")
 
 
--------
-
-if WINDOWS:
-    print("Pulsa ESC para salir")
-else:
-    print("Pulsa Ctrl+C para salir")
 
 
 
 
-if WINDOWS:
-    print("Pulsa ← / → para cambiar de pantalla | ESC para salir")
-else:
-    print("Pulsa Ctrl+C para salir")
 
 
 
