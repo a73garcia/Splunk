@@ -1,11 +1,3 @@
-TOTAL_SCREENS = 3
-current_screen = 0
-screen_lock = threading.Lock()
-stop_event = threading.Event()
-redraw_event = threading.Event()
-force_refresh_event = threading.Event()
-
-
 def esc_listener() -> None:
     global current_screen
 
@@ -16,46 +8,34 @@ def esc_listener() -> None:
         if msvcrt.kbhit():
             key = msvcrt.getch()
 
-            # ESC
+            # ESC -> salir
             if key == b"\x1b":
                 stop_event.set()
                 redraw_event.set()
                 force_refresh_event.set()
                 return
 
-            # R / r = refresco inmediato
+            # 🔴 R -> refresco REAL (consulta a nodos)
             if key in (b"r", b"R"):
                 force_refresh_event.set()
-                redraw_event.set()
                 continue
 
-            # Teclas especiales
+            # Teclas especiales (flechas)
             if key in (b"\x00", b"\xe0"):
                 key2 = msvcrt.getch()
 
                 with screen_lock:
-                    # Flecha izquierda
+                    # ← izquierda
                     if key2 == b"K":
                         current_screen = (current_screen - 1) % TOTAL_SCREENS
                         redraw_event.set()
 
-                    # Flecha derecha
+                    # → derecha
                     elif key2 == b"M":
                         current_screen = (current_screen + 1) % TOTAL_SCREENS
                         redraw_event.set()
 
         time.sleep(0.05)
-
-
-
-def print_footer_help() -> None:
-    print(f"\nCSV mensuales en: {CSV_OUTPUT_DIR}")
-    if WINDOWS:
-        print("Pulsa ← / → para cambiar de pantalla | R para refrescar | ESC para salir")
-    else:
-        print("Pulsa Ctrl+C para salir")
-
-
 
 
 def run_monitor(auth: Tuple[str, str]) -> None:
@@ -69,12 +49,17 @@ def run_monitor(auth: Tuple[str, str]) -> None:
 
     with requests.Session() as session:
         while not stop_event.is_set():
+
+            # 🔴 limpiamos flag de refresco al empezar ciclo
             force_refresh_event.clear()
 
             now = datetime.now()
             timestamp = now.strftime("%H:%M")
             current_data: Dict[str, Dict[str, Result]] = {}
 
+            # =========================
+            # FETCH REAL A NODOS
+            # =========================
             with ThreadPoolExecutor(max_workers=len(GROUPS)) as ex:
                 fut_map = {
                     ex.submit(fetch_cluster, session, g, auth, timestamp): g["cluster"]
@@ -85,8 +70,14 @@ def run_monitor(auth: Tuple[str, str]) -> None:
                     results = fut.result()
                     current_data[cluster] = {r.nodo: r for r in results}
 
+            # =========================
+            # CSV
+            # =========================
             persist_current_data_to_csv(current_data, now)
 
+            # =========================
+            # HISTÓRICO
+            # =========================
             for cluster, nodo_map in current_data.items():
                 queue_history.setdefault(cluster, {})
                 for nodo, r in nodo_map.items():
@@ -95,10 +86,16 @@ def run_monitor(auth: Tuple[str, str]) -> None:
 
             update_cluster_peaks(current_data, node_peaks, total_peaks, timestamp)
 
+            # =========================
+            # REFRESH / TIMER
+            # =========================
             incidents_active = has_incidents(current_data)
             refresh_seconds = REFRESH_SECONDS_INCIDENT if incidents_active else REFRESH_SECONDS_NORMAL
             next_refresh_time = datetime.now() + timedelta(seconds=refresh_seconds)
 
+            # =========================
+            # RENDER
+            # =========================
             render_screen(lambda: draw_current_screen(
                 next_refresh_time,
                 refresh_seconds,
@@ -111,8 +108,14 @@ def run_monitor(auth: Tuple[str, str]) -> None:
                 queue_history,
             ))
 
+            # =========================
+            # ESPERA INTELIGENTE
+            # =========================
             start_wait = time.time()
+
             while not stop_event.is_set():
+
+                # ← → cambio de pantalla
                 if redraw_event.is_set():
                     redraw_event.clear()
                     render_screen(lambda: draw_current_screen(
@@ -127,8 +130,10 @@ def run_monitor(auth: Tuple[str, str]) -> None:
                         queue_history,
                     ))
 
+                # 🔴 R -> FORZAR NUEVA CONSULTA
                 if force_refresh_event.is_set():
-                    break
+                    force_refresh_event.clear()
+                    break   # <- vuelve arriba y hace fetch real
 
                 elapsed = time.time() - start_wait
                 if elapsed >= refresh_seconds:
@@ -136,20 +141,15 @@ def run_monitor(auth: Tuple[str, str]) -> None:
 
                 time.sleep(0.1)
 
+            # =========================
+            # ACTUALIZAR HISTÓRICO
+            # =========================
             previous_data = {
                 c: {n: r.encolados for n, r in m.items()}
                 for c, m in current_data.items()
             }
 
     print("Monitor detenido")
-
-
-
-
-
-
-
-
 
 
 
