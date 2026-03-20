@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 import os
-import sys
 import csv
 import time
 import threading
@@ -62,53 +61,22 @@ ANSI_CODES = (
     "\033[0m",
 )
 
-stop_event = threading.Event()
-
-
-# =========================================================
-# CONSOLA WINDOWS
-# =========================================================
-def setup_console() -> None:
-    if not WINDOWS:
-        return
-
-    try:
-        os.system("chcp 65001 > nul")
-    except Exception:
-        pass
-
-    try:
-        sys.stdout.reconfigure(encoding="utf-8")
-        sys.stderr.reconfigure(encoding="utf-8")
-    except Exception:
-        pass
-
-    try:
-        import ctypes
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
-        mode = ctypes.c_uint32()
-        if kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
-            kernel32.SetConsoleMode(handle, mode.value | 0x0004)
-    except Exception:
-        pass
-
 
 # =========================================================
 # CLUSTERS
 # =========================================================
 GROUPS = [
-    {"cluster": "Europa",       "pattern": "https://dh529-esa{idx}.c3s2.iphmx.com/xml/status",  "start": 1, "end": 20},
-    {"cluster": "America",      "pattern": "https://dh5504-esa{idx}.iphmx.com/xml/status",      "start": 1, "end": 20},
-    {"cluster": "Brasil",       "pattern": "https://dh6121-esa{idx}.iphmx.com/xml/status",      "start": 1, "end": 20},
-    {"cluster": "Aplicaciones", "pattern": "https://dh5505-esa{idx}.c3s2.iphmx.com/xml/status", "start": 1, "end": 20},
+    {"cluster": "Europa",       "pattern": "xxx{idx}yyy", "start": 1, "end": 20},
+    {"cluster": "America",      "pattern": "xxx{idx}yyy", "start": 1, "end": 20},
+    {"cluster": "Brasil",       "pattern": "xxx{idx}yyy", "start": 1, "end": 20},
+    {"cluster": "Aplicaciones", "pattern": "xxx{idx}yyy", "start": 1, "end": 20},
 ]
 
 CLUSTER_THRESHOLDS = {
-    "Europa":       {"warning": 500,  "critical": 3000,  "total_warning": 2000,  "total_critical": 10000},
-    "America":      {"warning": 500,  "critical": 3000,  "total_warning": 2000,  "total_critical": 10000},
-    "Brasil":       {"warning": 500,  "critical": 3000,  "total_warning": 2000,  "total_critical": 10000},
-    "Aplicaciones": {"warning": 1000, "critical": 15000, "total_warning": 25000, "total_critical": 80000},
+    "Europa":       {"warning": 500, "critical": 3000,  "total_warning": 2000,  "total_critical": 10000},
+    "America":      {"warning": 500, "critical": 3000,  "total_warning": 2000,  "total_critical": 10000},
+    "Brasil":       {"warning": 500, "critical": 3000,  "total_warning": 2000,  "total_critical": 10000},
+    "Aplicaciones": {"warning": 500, "critical": 15000, "total_warning": 25000, "total_critical": 80000},
 }
 
 ADV_THRESHOLDS = {
@@ -159,6 +127,8 @@ CSV_HEADERS = [
     "soft_bounced_evts_15m",
     "error",
 ]
+
+stop_event = threading.Event()
 
 
 # =========================================================
@@ -349,9 +319,9 @@ def to_int(value: Optional[str]) -> int:
 
 def trend_symbol(prev: int, cur: int) -> str:
     if cur > prev:
-        return "+"
+        return "↑"
     if cur < prev:
-        return "-"
+        return "↓"
     return "="
 
 
@@ -376,7 +346,7 @@ def total_status_colored(cluster: str, total: int) -> str:
 def print_orange_separator(width: Optional[int] = None) -> None:
     if width is None:
         width = terminal_width(180)
-    print(f"{ORANGE}{'=' * width}{RESET}")
+    print(f"{ORANGE}{'═' * width}{RESET}")
 
 
 def orange_cluster_sep() -> str:
@@ -541,10 +511,10 @@ def cluster_rate_tendency(
     msg_ratio = msg_in_1m / max(msg_in_5m, 1)
 
     if msg_ratio >= 1.20 and queue_delta >= 0:
-        return f"{YELLOW}Trafico creciendo{RESET}"
+        return f"{YELLOW}Tráfico creciendo{RESET}"
 
     if msg_ratio <= 0.80 and queue_delta <= 0:
-        return f"{GREEN}Entrada moderandose{RESET}"
+        return f"{GREEN}Entrada moderándose{RESET}"
 
     return "Estable"
 
@@ -570,97 +540,6 @@ def has_incidents(current_data: Dict[str, Dict[str, Result]]) -> bool:
                 return True
 
     return False
-
-
-# =========================================================
-# BLOQUE SUPERIOR
-# =========================================================
-def print_summary_alerts_risk(
-    current_data: Dict[str, Dict[str, Result]],
-    previous_data: Dict[str, Dict[str, int]],
-) -> None:
-    totals: Dict[str, int] = {}
-    for cluster in cluster_order():
-        rows = list(current_data.get(cluster, {}).values())
-        totals[cluster] = sum(r.encolados for r in rows)
-
-    cluster_w = 13
-    total_w = 9
-    estado_w = 8
-
-    summary_lines = ["RESUMEN CLUSTERS", ""]
-    summary_lines.append(
-        f"{'Cluster'.ljust(cluster_w)} | {'Total'.rjust(total_w)} | {'Estado'.ljust(estado_w)} | Ultima variacion"
-    )
-
-    for cluster in cluster_order():
-        total = totals[cluster]
-        estado = total_status_colored(cluster, total)
-
-        if cluster not in previous_data or not previous_data.get(cluster):
-            last_var = "Sin historico"
-        else:
-            cur_total = sum(r.encolados for r in current_data.get(cluster, {}).values())
-            prev_total = sum(previous_data.get(cluster, {}).values())
-            delta = cur_total - prev_total
-            if delta > 0:
-                last_var = f"+{fmt_num_dot(delta)}"
-            elif delta < 0:
-                last_var = f"{fmt_num_dot(delta)}"
-            else:
-                last_var = "="
-
-        total_txt = fmt_num_dot(total)
-        if len(total_txt) > total_w:
-            total_txt = total_txt[-total_w:]
-
-        summary_lines.append(
-            f"{cluster.ljust(cluster_w)} | {total_txt.rjust(total_w)} | {ansi_ljust(estado, estado_w)} | {last_var}"
-        )
-
-    alert_lines = ["ALERTAS NODOS", ""]
-    risk_lines = ["NODOS EN RIESGO", ""]
-
-    alerts: List[str] = []
-    risks: List[str] = []
-
-    for cluster in cluster_order():
-        for nodo in sorted(current_data.get(cluster, {}).keys()):
-            r = current_data[cluster][nodo]
-            prev = get_prev_queue(previous_data, cluster, nodo)
-            diag = diagnose_node(r, prev)
-
-            if r.error:
-                alerts.append(f"{RED}{nodo} sin respuesta ({cluster}){RESET}")
-                continue
-
-            th = CLUSTER_THRESHOLDS[cluster]
-            if r.encolados >= th["critical"]:
-                alerts.append(f"{RED}{nodo} {cluster}: {fmt_num_dot(r.encolados)} en cola{RESET}")
-            elif r.encolados >= th["warning"]:
-                alerts.append(f"{YELLOW}{nodo} {cluster}: {fmt_num_dot(r.encolados)} en cola{RESET}")
-
-            if diag != "OK":
-                risks.append(natural_risk_text(cluster, nodo, diag))
-
-    if not alerts:
-        alert_lines.append(f"{GREEN}No se han detectado alertas{RESET}")
-    else:
-        alert_lines.extend(alerts[:6])
-
-    if not risks:
-        risk_lines.append(f"{GREEN}No se han detectado riesgos{RESET}")
-    else:
-        risk_lines.extend(risks[:6])
-
-    w1, w2, w3 = choose_three_col_widths(summary_lines, alert_lines, risk_lines, 58, 34, 38)
-
-    max_rows = max(len(summary_lines), len(alert_lines), len(risk_lines))
-    for i in range(max_rows):
-        c1 = pad_or_trim(summary_lines[i], w1) if i < len(summary_lines) else " " * w1
-        c2 = pad_or_trim(alert_lines[i], w2) if i < len(alert_lines) else " " * w2
-        c3 = pad_or_trim(risk_lines[i], w3) if i < len(risk_lines) else " " * w3
-        print(f"{c1}   {c2}   {c3}")
 
 
 # =========================================================
@@ -715,16 +594,21 @@ def print_cluster_peaks_table(
     cluster_sep_plain = " || "
     cluster_sep_colored = f" {orange_cluster_sep()} "
 
-    cluster_chunk_width = hora_w + len(col_sep) + nodo_w + len(col_sep) + enc_w
+    cluster_chunk_width = nodo_w + len(col_sep) + hora_w + len(col_sep) + enc_w
 
+    # HEADER TOP
     h1 = f"| {'Nivel'.ljust(row_w)}"
     for cluster in clusters:
         h1 += f"{cluster_sep_colored}{cluster.center(cluster_chunk_width)}"
     h1 += " |"
 
+    # HEADER SEPARATOR
+    mid_sep = "-" * visible_text_len(h1)
+
+    # HEADER BOTTOM
     sub = (
-        f"{'Hora'.center(hora_w)}{col_sep}"
         f"{'Nodo'.center(nodo_w)}{col_sep}"
+        f"{'Hora'.center(hora_w)}{col_sep}"
         f"{'Encol.'.center(enc_w)}"
     )
 
@@ -739,27 +623,28 @@ def print_cluster_peaks_table(
     )
 
     print(h1)
+    print(mid_sep)
     print(h2)
     print(sep)
 
-    ranking_by_cluster: Dict[str, List[Tuple[str, str, int]]] = {}
+    ranking_by_cluster = {}
     for cluster in clusters:
-        all_nodes = []
+        nodes = []
         for nodo, info in node_peaks.get(cluster, {}).items():
-            all_nodes.append((str(info["hora"]), nodo, int(info["encolados"])))
-        all_nodes.sort(key=lambda x: x[2], reverse=True)
-        ranking_by_cluster[cluster] = all_nodes
+            nodes.append((str(info["hora"]), nodo, int(info["encolados"])))
+        nodes.sort(key=lambda x: x[2], reverse=True)
+        ranking_by_cluster[cluster] = nodes
 
     for pos in range(3):
         line = f"| {('TOP ' + str(pos + 1)).ljust(row_w)}"
         for cluster in clusters:
             ranking = ranking_by_cluster.get(cluster, [])
             if pos < len(ranking):
-                hora, nodo, encolados = ranking[pos]
-                enc_txt = queue_color(cluster, fmt_num_dot(encolados).rjust(enc_w), encolados)
-                chunk = f"{hora.ljust(hora_w)}{col_sep}{nodo.ljust(nodo_w)}{col_sep}{enc_txt}"
+                hora, nodo, enc = ranking[pos]
+                enc_txt = queue_color(cluster, fmt_num_dot(enc).rjust(enc_w), enc)
+                chunk = f"{nodo.ljust(nodo_w)}{col_sep}{hora.ljust(hora_w)}{col_sep}{enc_txt}"
             else:
-                chunk = f"{'--:--'.ljust(hora_w)}{col_sep}{'-'.ljust(nodo_w)}{col_sep}{'0'.rjust(enc_w)}"
+                chunk = f"{'-'.ljust(nodo_w)}{col_sep}{'--:--'.ljust(hora_w)}{col_sep}{'0'.rjust(enc_w)}"
 
             line += f"{cluster_sep_colored}{chunk}"
 
@@ -773,13 +658,15 @@ def print_cluster_peaks_table(
         info = total_peaks.get(cluster, {"hora": "--:--", "total": 0})
         hora = str(info["hora"])
         total = int(info["total"])
+
         total_txt = color_by_threshold(
             fmt_num_dot(total).rjust(enc_w),
             total,
             CLUSTER_THRESHOLDS[cluster]["total_warning"],
             CLUSTER_THRESHOLDS[cluster]["total_critical"],
         )
-        chunk = f"{hora.ljust(hora_w)}{col_sep}{'TOTAL'.ljust(nodo_w)}{col_sep}{total_txt}"
+
+        chunk = f"{'TOTAL'.ljust(nodo_w)}{col_sep}{hora.ljust(hora_w)}{col_sep}{total_txt}"
         total_line += f"{cluster_sep_colored}{chunk}"
 
     total_line += " |"
@@ -1051,20 +938,99 @@ def fetch_cluster(
 ) -> List[Result]:
     cluster = group["cluster"]
     pattern = group["pattern"]
-    start = int(group.get("start", 1))
-    end = int(group.get("end", 20))
 
     results: List[Result] = []
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         futures = [
             ex.submit(fetch_one, session, pattern.format(idx=i), auth, timestamp, cluster, i)
-            for i in range(start, end + 1)
+            for i in range(1, 21)
         ]
         for fut in as_completed(futures):
             results.append(fut.result())
 
     return sorted(results, key=lambda r: r.nodo)
+
+
+# =========================================================
+# BLOQUE SUPERIOR
+# =========================================================
+def print_summary_alerts_risk(
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+) -> None:
+    totals = {}
+    for cluster in cluster_order():
+        rows = list(current_data.get(cluster, {}).values())
+        total_queue = sum(r.encolados for r in rows)
+        totals[cluster] = total_queue
+
+    summary_lines = ["RESUMEN CLUSTERS", ""]
+    summary_lines.append("Cluster       | Total | Estado   | Última variación")
+    for cluster in cluster_order():
+        total = totals[cluster]
+        estado = total_status_colored(cluster, total)
+
+        if cluster not in previous_data or not previous_data.get(cluster):
+            last_var = "Sin histórico"
+        else:
+            cur_total = sum(r.encolados for r in current_data.get(cluster, {}).values())
+            prev_total = sum(previous_data.get(cluster, {}).values())
+            delta = cur_total - prev_total
+            if delta > 0:
+                last_var = f"+{fmt_num_dot(delta)}"
+            elif delta < 0:
+                last_var = f"{fmt_num_dot(delta)}"
+            else:
+                last_var = "="
+
+        summary_lines.append(
+            f"{cluster.ljust(13)} | {fmt_num_dot(total).rjust(5)} | {ansi_ljust(estado, 8)} | {last_var}"
+        )
+
+    alert_lines = ["ALERTAS NODOS", ""]
+    risk_lines = ["NODOS EN RIESGO", ""]
+
+    alerts: List[str] = []
+    risks: List[str] = []
+
+    for cluster in cluster_order():
+        for nodo in sorted(current_data.get(cluster, {}).keys()):
+            r = current_data[cluster][nodo]
+            prev = get_prev_queue(previous_data, cluster, nodo)
+            diag = diagnose_node(r, prev)
+
+            if r.error:
+                alerts.append(f"{RED}{nodo} sin respuesta ({cluster}){RESET}")
+                continue
+
+            th = CLUSTER_THRESHOLDS[cluster]
+            if r.encolados >= th["critical"]:
+                alerts.append(f"{RED}{nodo} {cluster}: {fmt_num_dot(r.encolados)} en cola{RESET}")
+            elif r.encolados >= th["warning"]:
+                alerts.append(f"{YELLOW}{nodo} {cluster}: {fmt_num_dot(r.encolados)} en cola{RESET}")
+
+            if diag != "OK":
+                risks.append(natural_risk_text(cluster, nodo, diag))
+
+    if not alerts:
+        alert_lines.append(f"{GREEN}No se han detectado alertas{RESET}")
+    else:
+        alert_lines.extend(alerts[:6])
+
+    if not risks:
+        risk_lines.append(f"{GREEN}No se han detectado riesgos{RESET}")
+    else:
+        risk_lines.extend(risks[:6])
+
+    w1, w2, w3 = choose_three_col_widths(summary_lines, alert_lines, risk_lines, 50, 34, 38)
+
+    max_rows = max(len(summary_lines), len(alert_lines), len(risk_lines))
+    for i in range(max_rows):
+        c1 = pad_or_trim(summary_lines[i], w1) if i < len(summary_lines) else " " * w1
+        c2 = pad_or_trim(alert_lines[i], w2) if i < len(alert_lines) else " " * w2
+        c3 = pad_or_trim(risk_lines[i], w3) if i < len(risk_lines) else " " * w3
+        print(f"{c1}   {c2}   {c3}")
 
 
 # =========================================================
@@ -1077,16 +1043,21 @@ def print_queue_table(
 ) -> None:
     print("ESTADO ENCOLADOS NODOS\n")
 
-    clusters = cluster_order()
     nodes = [f"ESA{i:02d}" for i in range(1, 21)]
 
     ant_width = 8
     enc_width = 9
     var_width = 3
     ac_width = 9
+    hora_width = 5
+
+    mid_label_width = max(len("Cluster"), len("Nodo"), max(len(n) for n in nodes))
 
     def make_state_block(ant: str, enc: str, var: str, ac: str) -> str:
         return f"{orange_cluster_sep()} {ant} | {enc} | {var} | {ac} "
+
+    def make_mid_block(text: str) -> str:
+        return f"{orange_cluster_sep()} {text.center(mid_label_width)} "
 
     sample_block = make_state_block(
         "0".rjust(ant_width),
@@ -1094,21 +1065,27 @@ def print_queue_table(
         "=".center(var_width),
         "0".rjust(ac_width),
     )
+
     block_visible = visible_text_len(sample_block)
+    mid_visible = visible_text_len(make_mid_block("Cluster"))
 
     def cluster_header_block(name: str) -> str:
         return f"{orange_cluster_sep()} {name.center(block_visible - 4)} "
 
+    def cluster_mid_header_block(text: str) -> str:
+        return f"{orange_cluster_sep()} {text.center(mid_visible - 4)} "
+
     def cluster_subheader_block() -> str:
         return make_state_block(
-            "Anterior".rjust(ant_width),
-            "Encolados".rjust(enc_width),
+            "Anterior".center(ant_width),
+            "Encolados".center(enc_width),
             "Var".center(var_width),
-            "AC".rjust(ac_width),
+            "AC".center(ac_width),
         )
 
     def cluster_data_block(cluster: str, nodo: str) -> str:
         r = current_data.get(cluster, {}).get(nodo)
+
         if r is None:
             ant = "0".rjust(ant_width)
             enc = "0".rjust(enc_width)
@@ -1137,11 +1114,7 @@ def print_queue_table(
         ac_total = sum(r.active_recips for r in current_data.get(cluster, {}).values())
 
         total_cur_txt = queue_color(cluster, fmt_num_dot(total_cur).rjust(enc_width), total_cur)
-
-        ac_total_txt = fmt_num_dot(ac_total)
-        if len(ac_total_txt) > ac_width:
-            ac_total_txt = ac_total_txt[-ac_width:]
-        ac_total_txt = ac_total_txt.rjust(ac_width)
+        ac_total_txt = fmt_num_dot(ac_total)[-ac_width:].rjust(ac_width)
 
         return make_state_block(
             fmt_num_dot(total_prev).rjust(ant_width),
@@ -1150,22 +1123,55 @@ def print_queue_table(
             ac_total_txt,
         )
 
-    header = "| Hora  | Nodo  " + "".join(cluster_header_block(c) for c in clusters) + "|"
-    subhdr = "|       |       " + "".join(cluster_subheader_block() for _ in clusters) + "|"
-    sep = "-" * visible_text_len(subhdr)
+    header_top = "| " + "".center(hora_width) + " "
+    header_top += cluster_header_block("Europa")
+    header_top += cluster_mid_header_block("Cluster")
+    header_top += cluster_header_block("America")
+    header_top += cluster_header_block("Brasil")
+    header_top += cluster_mid_header_block("Cluster")
+    header_top += cluster_header_block("Aplicaciones")
+    header_top += "|"
 
-    print(header)
-    print(subhdr)
+    mid_sep = "-" * visible_text_len(header_top)
+
+    header_bottom = "| " + "Hora".center(hora_width) + " "
+    header_bottom += cluster_subheader_block()
+    header_bottom += cluster_mid_header_block("Nodo")
+    header_bottom += cluster_subheader_block()
+    header_bottom += cluster_subheader_block()
+    header_bottom += cluster_mid_header_block("Nodo")
+    header_bottom += cluster_subheader_block()
+    header_bottom += "|"
+
+    sep = "-" * visible_text_len(header_bottom)
+
+    print(header_top)
+    print(mid_sep)
+    print(header_bottom)
     print(sep)
 
     for nodo in nodes:
-        line = f"| {timestamp.ljust(5)} | {nodo.ljust(5)} " + "".join(
-            cluster_data_block(cluster, nodo) for cluster in clusters
-        ) + "|"
+        line = f"| {timestamp.center(hora_width)} "
+        line += cluster_data_block("Europa", nodo)
+        line += make_mid_block(nodo)
+        line += cluster_data_block("America", nodo)
+        line += cluster_data_block("Brasil", nodo)
+        line += make_mid_block(nodo)
+        line += cluster_data_block("Aplicaciones", nodo)
+        line += "|"
         print(line)
 
     print(sep)
-    total_line = "|       | TOTAL " + "".join(cluster_total_block(cluster) for cluster in clusters) + "|"
+
+    total_line = "| " + "".center(hora_width) + " "
+    total_line += cluster_total_block("Europa")
+    total_line += make_mid_block("")
+    total_line += cluster_total_block("America")
+    total_line += cluster_total_block("Brasil")
+    total_line += make_mid_block("")
+    total_line += cluster_total_block("Aplicaciones")
+    total_line += "|"
+
     print(total_line)
 
 
@@ -1178,11 +1184,16 @@ def print_node_health_table(
 ) -> None:
     print("SALUD OPERATIVA DE NODOS\n")
 
-    clusters = cluster_order()
     nodes = [f"ESA{i:02d}" for i in range(1, 21)]
 
     status_w = 8
     metric_w = 5
+
+    mid_label_width = max(
+        len("Cluster"),
+        len("Nodo"),
+        max(len(n) for n in nodes),
+    )
 
     def make_health_block(status: str, cpu: str, ram: str, ci: str, co: str, hs: str) -> str:
         return (
@@ -1195,6 +1206,9 @@ def print_node_health_table(
             f"{hs} "
         )
 
+    def make_mid_block(text: str) -> str:
+        return f"{orange_cluster_sep()} {text.center(mid_label_width)} "
+
     sample_block = make_health_block(
         "online".ljust(status_w),
         "100%".rjust(metric_w),
@@ -1203,19 +1217,24 @@ def print_node_health_table(
         "9999".rjust(metric_w),
         "100%".rjust(metric_w),
     )
+
     block_visible = visible_text_len(sample_block)
+    mid_visible = visible_text_len(make_mid_block("Cluster"))
 
     def cluster_header_block(name: str) -> str:
         return f"{orange_cluster_sep()} {name.center(block_visible - 4)} "
 
+    def cluster_mid_header_block(text: str) -> str:
+        return f"{orange_cluster_sep()} {text.center(mid_visible - 4)} "
+
     def cluster_subheader_block() -> str:
         return make_health_block(
-            "Status".ljust(status_w),
-            "CPU".rjust(metric_w),
-            "RAM".rjust(metric_w),
-            "CI".rjust(metric_w),
-            "CO".rjust(metric_w),
-            "HS".rjust(metric_w),
+            "Status".center(status_w),
+            "CPU".center(metric_w),
+            "RAM".center(metric_w),
+            "CI".center(metric_w),
+            "CO".center(metric_w),
+            "HS".center(metric_w),
         )
 
     def cluster_data_block(cluster: str, nodo: str) -> str:
@@ -1223,11 +1242,7 @@ def print_node_health_table(
 
         if r is None:
             status_txt = f"{RED}offline{RESET}"
-            cpu = 0
-            ram = 0
-            ci = 0
-            co = 0
-            hs = 0
+            cpu = ram = ci = co = hs = 0
         else:
             prev = get_prev_queue(previous_data, cluster, nodo)
             hs = health_score(r, prev)
@@ -1244,47 +1259,68 @@ def print_node_health_table(
             ci = r.conn_in
             co = r.conn_out
 
-        cpu_str = f"{cpu}%"
-        ram_str = f"{ram}%"
-        hs_str = f"{hs}%"
+        cpu_txt = color_by_threshold(
+            f"{cpu}%".rjust(metric_w),
+            cpu,
+            ADV_THRESHOLDS["cpu_warning"],
+            ADV_THRESHOLDS["cpu_critical"],
+        )
+        ram_txt = color_by_threshold(
+            f"{ram}%".rjust(metric_w),
+            ram,
+            ADV_THRESHOLDS["ram_warning"],
+            ADV_THRESHOLDS["ram_critical"],
+        )
+        hs_txt = health_color_text(hs, f"{hs}%".rjust(metric_w))
 
-        if len(cpu_str) > metric_w:
-            cpu_str = cpu_str[:metric_w]
-        if len(ram_str) > metric_w:
-            ram_str = ram_str[:metric_w]
-        if len(hs_str) > metric_w:
-            hs_str = hs_str[:metric_w]
-
-        cpu_txt = color_by_threshold(cpu_str.rjust(metric_w), cpu, ADV_THRESHOLDS["cpu_warning"], ADV_THRESHOLDS["cpu_critical"])
-        ram_txt = color_by_threshold(ram_str.rjust(metric_w), ram, ADV_THRESHOLDS["ram_warning"], ADV_THRESHOLDS["ram_critical"])
-        hs_txt = health_color_text(hs, hs_str.rjust(metric_w))
-
-        ci_txt = fmt_num_dot(ci)
-        co_txt = fmt_num_dot(co)
-        if len(ci_txt) > metric_w:
-            ci_txt = ci_txt[-metric_w:]
-        if len(co_txt) > metric_w:
-            co_txt = co_txt[-metric_w:]
+        ci_txt = fmt_num_dot(ci)[-metric_w:].rjust(metric_w)
+        co_txt = fmt_num_dot(co)[-metric_w:].rjust(metric_w)
 
         return make_health_block(
             ansi_ljust(status_txt, status_w),
             ansi_rjust(cpu_txt, metric_w),
             ansi_rjust(ram_txt, metric_w),
-            ci_txt.rjust(metric_w),
-            co_txt.rjust(metric_w),
+            ci_txt,
+            co_txt,
             ansi_rjust(hs_txt, metric_w),
         )
 
-    header = "| Nodo  " + "".join(cluster_header_block(c) for c in clusters) + "|"
-    subhdr = "|       " + "".join(cluster_subheader_block() for _ in clusters) + "|"
-    sep = "-" * visible_text_len(subhdr)
+    header_top = "| "
+    header_top += cluster_header_block("Europa")
+    header_top += cluster_mid_header_block("Cluster")
+    header_top += cluster_header_block("America")
+    header_top += cluster_header_block("Brasil")
+    header_top += cluster_mid_header_block("Cluster")
+    header_top += cluster_header_block("Aplicaciones")
+    header_top += "|"
 
-    print(header)
-    print(subhdr)
+    mid_sep = "-" * visible_text_len(header_top)
+
+    header_bottom = "| "
+    header_bottom += cluster_subheader_block()
+    header_bottom += cluster_mid_header_block("Nodo")
+    header_bottom += cluster_subheader_block()
+    header_bottom += cluster_subheader_block()
+    header_bottom += cluster_mid_header_block("Nodo")
+    header_bottom += cluster_subheader_block()
+    header_bottom += "|"
+
+    sep = "-" * visible_text_len(header_bottom)
+
+    print(header_top)
+    print(mid_sep)
+    print(header_bottom)
     print(sep)
 
     for nodo in nodes:
-        line = f"| {nodo.ljust(5)} " + "".join(cluster_data_block(cluster, nodo) for cluster in clusters) + "|"
+        line = "| "
+        line += cluster_data_block("Europa", nodo)
+        line += make_mid_block(nodo)
+        line += cluster_data_block("America", nodo)
+        line += cluster_data_block("Brasil", nodo)
+        line += make_mid_block(nodo)
+        line += cluster_data_block("Aplicaciones", nodo)
+        line += "|"
         print(line)
 
     print(sep)
@@ -1303,6 +1339,7 @@ def print_rates_table(
     num_w = 8
 
     term_w = terminal_width(180)
+
     fixed_width = cluster_w + (num_w * 7) + 8
     tendencia_w = max(20, term_w - fixed_width)
 
@@ -1320,7 +1357,9 @@ def print_rates_table(
 
     header_parts = []
     for name, width in headers:
-        if name in ("Cluster", "Tendencia"):
+        if name == "Cluster":
+            header_parts.append(name.ljust(width))
+        elif name == "Tendencia":
             header_parts.append(name.ljust(width))
         else:
             header_parts.append(name.rjust(width))
@@ -1418,7 +1457,7 @@ def print_advanced_findings(
     previous_data: Dict[str, Dict[str, int]],
     queue_history: Dict[str, Dict[str, List[int]]],
 ) -> None:
-    print("ANALISIS AVANZADO\n")
+    print("ANÁLISIS AVANZADO\n")
 
     findings: List[str] = []
     findings.append("Desbalanceo entre nodos del cluster:")
@@ -1435,10 +1474,10 @@ def print_advanced_findings(
         loaded_nodes = sum(1 for q in queues if q > 0)
 
         if max_q >= CLUSTER_THRESHOLDS[cluster]["critical"] and avg_q > 0 and max_q >= avg_q * 3:
-            findings.append(f" - {cluster}: desbalanceado critico (max={fmt_num_dot(max_q)}, media={fmt_num_dot(avg_q)})")
+            findings.append(f" - {cluster}: desbalanceado crítico (máx={fmt_num_dot(max_q)}, media={fmt_num_dot(avg_q)})")
 
         if zero_nodes > 0 and loaded_nodes > 0:
-            findings.append(f" - {cluster}: nodos vacios y nodos cargados a la vez")
+            findings.append(f" - {cluster}: nodos vacíos y nodos cargados a la vez")
 
         for r in rows:
             prev = get_prev_queue(previous_data, cluster, r.nodo)
@@ -1471,6 +1510,102 @@ def print_advanced_findings(
 
 
 # =========================================================
+# PANTALLAS
+# =========================================================
+def draw_screen_1(
+    next_refresh_time: datetime,
+    refresh_seconds: int,
+    incidents_active: bool,
+    timestamp: str,
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+    node_peaks: Dict[str, Dict[str, Dict[str, object]]],
+    total_peaks: Dict[str, Dict[str, object]],
+) -> None:
+    print_header_with_timer("MONITOR COLAS ESA - PANTALLA 1/3", next_refresh_time, refresh_seconds)
+
+    if incidents_active:
+        print(f"{YELLOW}Modo incidencias activo{RESET}\n")
+    else:
+        print(f"{GREEN}Modo normal{RESET}\n")
+
+    print_summary_alerts_risk(current_data, previous_data)
+    print()
+    print_orange_separator()
+    print()
+
+    print_queue_table(timestamp, current_data, previous_data)
+    print()
+    print_orange_separator()
+    print()
+
+    print_cluster_peaks_table(node_peaks, total_peaks)
+
+    print(f"\nCSV mensuales en: {CSV_OUTPUT_DIR}")
+    if WINDOWS:
+        print("Pulsa ESC para salir")
+    else:
+        print("Pulsa Ctrl+C para salir")
+
+
+def draw_screen_2(
+    next_refresh_time: datetime,
+    refresh_seconds: int,
+    incidents_active: bool,
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+) -> None:
+    print_header_with_timer("MONITOR COLAS ESA - PANTALLA 2/3", next_refresh_time, refresh_seconds)
+
+    if incidents_active:
+        print(f"{YELLOW}Modo incidencias activo{RESET}\n")
+    else:
+        print(f"{GREEN}Modo normal{RESET}\n")
+
+    print_node_health_table(current_data, previous_data)
+    print()
+    print_orange_separator()
+    print()
+
+    print_rates_table(current_data, previous_data)
+
+    print(f"\nCSV mensuales en: {CSV_OUTPUT_DIR}")
+    if WINDOWS:
+        print("Pulsa ESC para salir")
+    else:
+        print("Pulsa Ctrl+C para salir")
+
+
+def draw_screen_3(
+    next_refresh_time: datetime,
+    refresh_seconds: int,
+    incidents_active: bool,
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+    queue_history: Dict[str, Dict[str, List[int]]],
+) -> None:
+    print_header_with_timer("MONITOR COLAS ESA - PANTALLA 3/3", next_refresh_time, refresh_seconds)
+
+    if incidents_active:
+        print(f"{YELLOW}Modo incidencias activo{RESET}\n")
+    else:
+        print(f"{GREEN}Modo normal{RESET}\n")
+
+    print_status_incidents(current_data)
+    print()
+    print_orange_separator()
+    print()
+
+    print_advanced_findings(current_data, previous_data, queue_history)
+
+    print(f"\nCSV mensuales en: {CSV_OUTPUT_DIR}")
+    if WINDOWS:
+        print("Pulsa ESC para salir")
+    else:
+        print("Pulsa Ctrl+C para salir")
+
+
+# =========================================================
 # RUN
 # =========================================================
 def run_monitor(auth: Tuple[str, str]) -> None:
@@ -1478,6 +1613,7 @@ def run_monitor(auth: Tuple[str, str]) -> None:
     queue_history: Dict[str, Dict[str, List[int]]] = {}
     node_peaks: Dict[str, Dict[str, Dict[str, object]]] = {}
     total_peaks: Dict[str, Dict[str, object]] = {}
+    screen_index = 0
 
     listener = threading.Thread(target=esc_listener, daemon=True)
     listener.start()
@@ -1518,50 +1654,34 @@ def run_monitor(auth: Tuple[str, str]) -> None:
             next_refresh_time = datetime.now() + timedelta(seconds=refresh_seconds)
 
             def draw() -> None:
-                print_header_with_timer("MONITOR COLAS ESA", next_refresh_time, refresh_seconds)
-
-                if incidents_active:
-                    print(f"{YELLOW}Modo incidencias activo{RESET}\n")
+                if screen_index == 0:
+                    draw_screen_1(
+                        next_refresh_time,
+                        refresh_seconds,
+                        incidents_active,
+                        timestamp,
+                        current_data,
+                        previous_data,
+                        node_peaks,
+                        total_peaks,
+                    )
+                elif screen_index == 1:
+                    draw_screen_2(
+                        next_refresh_time,
+                        refresh_seconds,
+                        incidents_active,
+                        current_data,
+                        previous_data,
+                    )
                 else:
-                    print(f"{GREEN}Modo normal{RESET}\n")
-
-                print_summary_alerts_risk(current_data, previous_data)
-                print()
-                print_orange_separator()
-                print()
-
-                print_queue_table(timestamp, current_data, previous_data)
-                print()
-                print_orange_separator()
-                print()
-
-                print_cluster_peaks_table(node_peaks, total_peaks)
-                print()
-                print_orange_separator()
-                print()
-
-                print_node_health_table(current_data, previous_data)
-                print()
-                print_orange_separator()
-                print()
-
-                print_rates_table(current_data, previous_data)
-                print()
-                print_orange_separator()
-                print()
-
-                print_status_incidents(current_data)
-                print()
-                print_orange_separator()
-                print()
-
-                print_advanced_findings(current_data, previous_data, queue_history)
-
-                print(f"\nCSV mensuales en: {CSV_OUTPUT_DIR}")
-                if WINDOWS:
-                    print("Pulsa ESC para salir")
-                else:
-                    print("Pulsa Ctrl+C para salir")
+                    draw_screen_3(
+                        next_refresh_time,
+                        refresh_seconds,
+                        incidents_active,
+                        current_data,
+                        previous_data,
+                        queue_history,
+                    )
 
             render_screen(draw)
 
@@ -1570,6 +1690,7 @@ def run_monitor(auth: Tuple[str, str]) -> None:
                 time.sleep(0.1)
                 slept += 0.1
 
+            screen_index = (screen_index + 1) % 3
             previous_data = previous_data_snapshot
 
     print("Monitor detenido")
@@ -1579,8 +1700,6 @@ def run_monitor(auth: Tuple[str, str]) -> None:
 # MAIN
 # =========================================================
 def main() -> None:
-    setup_console()
-
     if not os.path.exists(CREDENTIALS_FILE):
         raise FileNotFoundError(
             f"No existe el archivo '{CREDENTIALS_FILE}'. Debe contener GLOBAL_USERNAME y GLOBAL_PASSWORD"
