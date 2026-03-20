@@ -84,7 +84,10 @@ def print_queue_table(
             ac_total_txt,
         )
 
-    header = "| Hora  | Nodo  "
+    # =========================
+    # HEADER (SIN NODO INICIAL)
+    # =========================
+    header = "| Hora  "
     header += cluster_header_block("Europa")
     header += f"{orange_cluster_sep()} {'Nodo'.center(nodo_block_visible - 4)} "
     header += cluster_header_block("America")
@@ -93,7 +96,7 @@ def print_queue_table(
     header += cluster_header_block("Aplicaciones")
     header += "|"
 
-    subhdr = "|       |       "
+    subhdr = "|       "
     subhdr += cluster_subheader_block()
     subhdr += make_nodo_mid_block("Nodo")
     subhdr += cluster_subheader_block()
@@ -108,8 +111,11 @@ def print_queue_table(
     print(subhdr)
     print(sep)
 
+    # =========================
+    # FILAS
+    # =========================
     for nodo in nodes:
-        line = f"| {timestamp.ljust(5)} | {nodo.ljust(5)} "
+        line = f"| {timestamp.ljust(5)} "
         line += cluster_data_block("Europa", nodo)
         line += make_nodo_mid_block(nodo)
         line += cluster_data_block("America", nodo)
@@ -121,7 +127,10 @@ def print_queue_table(
 
     print(sep)
 
-    total_line = "|       | TOTAL "
+    # =========================
+    # TOTAL
+    # =========================
+    total_line = "|       "
     total_line += cluster_total_block("Europa")
     total_line += make_nodo_mid_block(" ")
     total_line += cluster_total_block("America")
