@@ -1,94 +1,149 @@
-def print_cluster_peaks_table(
-    node_peaks: Dict[str, Dict[str, Dict[str, object]]],
-    total_peaks: Dict[str, Dict[str, object]],
-) -> None:
-    print("PICOS DE ENCOLADOS POR CLUSTER\n")
+stop_event = threading.Event()
 
-    clusters = cluster_order()
+TOTAL_SCREENS = 3
+current_screen = 0
+screen_lock = threading.Lock()
 
-    row_w = 9
-    hora_w = 5
-    nodo_w = 6
-    enc_w = 9
 
-    col_sep = " | "
-    cluster_sep_plain = " || "
-    cluster_sep_colored = f" {orange_cluster_sep()} "
+def esc_listener() -> None:
+    global current_screen
 
-    cluster_chunk_width = nodo_w + len(col_sep) + hora_w + len(col_sep) + enc_w
+    if not WINDOWS:
+        return
 
-    # HEADER TOP
-    h1 = f"| {'Nivel'.ljust(row_w)}"
-    for cluster in clusters:
-        h1 += f"{cluster_sep_colored}{cluster.center(cluster_chunk_width)}"
-    h1 += " |"
+    while not stop_event.is_set():
+        if msvcrt.kbhit():
+            key = msvcrt.getch()
 
-    # HEADER SEPARATOR
-    mid_sep = "-" * visible_text_len(h1)
+            # ESC
+            if key == b"\x1b":
+                stop_event.set()
+                return
 
-    # HEADER BOTTOM
-    sub = (
-        f"{'Nodo'.center(nodo_w)}{col_sep}"
-        f"{'Hora'.center(hora_w)}{col_sep}"
-        f"{'Encol.'.center(enc_w)}"
-    )
+            # Teclas especiales en Windows
+            if key in (b"\x00", b"\xe0"):
+                key2 = msvcrt.getch()
 
-    h2 = f"| {'':<{row_w}}"
-    for _ in clusters:
-        h2 += f"{cluster_sep_colored}{sub}"
-    h2 += " |"
+                with screen_lock:
+                    # Flecha izquierda
+                    if key2 == b"K":
+                        current_screen = (current_screen - 1) % TOTAL_SCREENS
 
-    sep = "-" * (
-        2 + row_w +
-        (len(cluster_sep_plain) + cluster_chunk_width) * len(clusters) + 2
-    )
+                    # Flecha derecha
+                    elif key2 == b"M":
+                        current_screen = (current_screen + 1) % TOTAL_SCREENS
 
-    print(h1)
-    print(mid_sep)
-    print(h2)
-    print(sep)
+        time.sleep(0.1)
 
-    ranking_by_cluster = {}
-    for cluster in clusters:
-        nodes = []
-        for nodo, info in node_peaks.get(cluster, {}).items():
-            nodes.append((str(info["hora"]), nodo, int(info["encolados"])))
-        nodes.sort(key=lambda x: x[2], reverse=True)
-        ranking_by_cluster[cluster] = nodes
 
-    for pos in range(3):
-        line = f"| {('TOP ' + str(pos + 1)).ljust(row_w)}"
-        for cluster in clusters:
-            ranking = ranking_by_cluster.get(cluster, [])
-            if pos < len(ranking):
-                hora, nodo, enc = ranking[pos]
-                enc_txt = queue_color(cluster, fmt_num_dot(enc).rjust(enc_w), enc)
-                chunk = f"{nodo.ljust(nodo_w)}{col_sep}{hora.ljust(hora_w)}{col_sep}{enc_txt}"
-            else:
-                chunk = f"{'-'.ljust(nodo_w)}{col_sep}{'--:--'.ljust(hora_w)}{col_sep}{'0'.rjust(enc_w)}"
+def run_monitor(auth: Tuple[str, str]) -> None:
+    global current_screen
 
-            line += f"{cluster_sep_colored}{chunk}"
+    previous_data: Dict[str, Dict[str, int]] = {}
+    queue_history: Dict[str, Dict[str, List[int]]] = {}
+    node_peaks: Dict[str, Dict[str, Dict[str, object]]] = {}
+    total_peaks: Dict[str, Dict[str, object]] = {}
 
-        line += " |"
-        print(line)
+    listener = threading.Thread(target=esc_listener, daemon=True)
+    listener.start()
 
-    print(sep)
+    with requests.Session() as session:
+        while not stop_event.is_set():
+            now = datetime.now()
+            timestamp = now.strftime("%H:%M")
+            current_data: Dict[str, Dict[str, Result]] = {}
 
-    total_line = f"| {'TOTAL MAX'.ljust(row_w)}"
-    for cluster in clusters:
-        info = total_peaks.get(cluster, {"hora": "--:--", "total": 0})
-        hora = str(info["hora"])
-        total = int(info["total"])
+            with ThreadPoolExecutor(max_workers=len(GROUPS)) as ex:
+                fut_map = {
+                    ex.submit(fetch_cluster, session, g, auth, timestamp): g["cluster"]
+                    for g in GROUPS
+                }
+                for fut in as_completed(fut_map):
+                    cluster = fut_map[fut]
+                    results = fut.result()
+                    current_data[cluster] = {r.nodo: r for r in results}
 
-        total_txt = color_by_threshold(
-            fmt_num_dot(total).rjust(enc_w),
-            total,
-            CLUSTER_THRESHOLDS[cluster]["total_warning"],
-            CLUSTER_THRESHOLDS[cluster]["total_critical"],
-        )
+            persist_current_data_to_csv(current_data, now)
 
-        chunk = f"{'TOTAL'.ljust(nodo_w)}{col_sep}{hora.ljust(hora_w)}{col_sep}{total_txt}"
-        total_line += f"{cluster_sep_colored}{chunk}"
+            for cluster, nodo_map in current_data.items():
+                queue_history.setdefault(cluster, {})
+                for nodo, r in nodo_map.items():
+                    queue_history[cluster].setdefault(nodo, []).append(r.encolados)
+                    queue_history[cluster][nodo] = queue_history[cluster][nodo][-5:]
 
-    total_line += " |"
-    print(total_line)
+            update_cluster_peaks(current_data, node_peaks, total_peaks, timestamp)
+
+            previous_data_snapshot = {
+                c: {n: r.encolados for n, r in m.items()}
+                for c, m in current_data.items()
+            }
+
+            incidents_active = has_incidents(current_data)
+            refresh_seconds = REFRESH_SECONDS_INCIDENT if incidents_active else REFRESH_SECONDS_NORMAL
+            next_refresh_time = datetime.now() + timedelta(seconds=refresh_seconds)
+
+            def draw() -> None:
+                with screen_lock:
+                    screen = current_screen
+
+                if screen == 0:
+                    draw_screen_1(
+                        next_refresh_time,
+                        refresh_seconds,
+                        incidents_active,
+                        timestamp,
+                        current_data,
+                        previous_data,
+                        node_peaks,
+                        total_peaks,
+                    )
+                elif screen == 1:
+                    draw_screen_2(
+                        next_refresh_time,
+                        refresh_seconds,
+                        incidents_active,
+                        current_data,
+                        previous_data,
+                    )
+                else:
+                    draw_screen_3(
+                        next_refresh_time,
+                        refresh_seconds,
+                        incidents_active,
+                        current_data,
+                        previous_data,
+                        queue_history,
+                    )
+
+            render_screen(draw)
+
+            slept = 0.0
+            while slept < refresh_seconds and not stop_event.is_set():
+                time.sleep(0.1)
+                slept += 0.1
+
+            previous_data = previous_data_snapshot
+
+    print("Monitor detenido")
+
+
+-------
+
+if WINDOWS:
+    print("Pulsa ESC para salir")
+else:
+    print("Pulsa Ctrl+C para salir")
+
+
+
+
+if WINDOWS:
+    print("Pulsa ← / → para cambiar de pantalla | ESC para salir")
+else:
+    print("Pulsa Ctrl+C para salir")
+
+
+
+
+
+
