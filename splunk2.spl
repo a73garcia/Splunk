@@ -1,146 +1,3 @@
-def print_queue_table(
-    timestamp: str,
-    current_data: Dict[str, Dict[str, Result]],
-    previous_data: Dict[str, Dict[str, int]],
-) -> None:
-    print("ESTADO ENCOLADOS NODOS\n")
-
-    nodes = [f"ESA{i:02d}" for i in range(1, 21)]
-
-    ant_width = 8
-    enc_width = 9
-    var_width = 3
-    ac_width = 9
-    hora_width = 5
-
-    mid_label_width = max(len("Cluster"), len("Nodo"), max(len(n) for n in nodes))
-
-    def make_state_block(ant: str, enc: str, var: str, ac: str) -> str:
-        return f"{orange_cluster_sep()} {ant} | {enc} | {var} | {ac} "
-
-    def make_mid_block(text: str) -> str:
-        return f"{orange_cluster_sep()} {text.center(mid_label_width)} "
-
-    sample_block = make_state_block(
-        "0".rjust(ant_width),
-        "0".rjust(enc_width),
-        "=".center(var_width),
-        "0".rjust(ac_width),
-    )
-
-    block_visible = visible_text_len(sample_block)
-    mid_visible = visible_text_len(make_mid_block("Cluster"))
-
-    def cluster_header_block(name: str) -> str:
-        return f"{orange_cluster_sep()} {name.center(block_visible - 4)} "
-
-    def cluster_mid_header_block(text: str) -> str:
-        return f"{orange_cluster_sep()} {text.center(mid_visible - 4)} "
-
-    def cluster_subheader_block() -> str:
-        return make_state_block(
-            "Anterior".center(ant_width),
-            "Encolados".center(enc_width),
-            "Var".center(var_width),
-            "AC".center(ac_width),
-        )
-
-    def cluster_data_block(cluster: str, nodo: str) -> str:
-        r = current_data.get(cluster, {}).get(nodo)
-
-        if r is None:
-            ant = "0".rjust(ant_width)
-            enc = "0".rjust(enc_width)
-            var = "=".center(var_width)
-            ac = "0".rjust(ac_width)
-        else:
-            prev = get_prev_queue(previous_data, cluster, nodo)
-            ant = fmt_num_dot(prev).rjust(ant_width)
-
-            enc_txt = fmt_num_dot(r.encolados).rjust(enc_width)
-            enc = queue_color(cluster, enc_txt, r.encolados)
-
-            var = trend_symbol(prev, r.encolados).center(var_width)
-
-            ac_txt = fmt_num_dot(r.active_recips)
-            if len(ac_txt) > ac_width:
-                ac_txt = ac_txt[-ac_width:]
-            ac = ac_txt.rjust(ac_width)
-
-        return make_state_block(ant, enc, var, ac)
-
-    def cluster_total_block(cluster: str) -> str:
-        total_cur = sum(r.encolados for r in current_data.get(cluster, {}).values())
-        total_prev = sum(previous_data.get(cluster, {}).values()) if cluster in previous_data else 0
-        var = trend_symbol(total_prev, total_cur).center(var_width)
-        ac_total = sum(r.active_recips for r in current_data.get(cluster, {}).values())
-
-        total_cur_txt = queue_color(cluster, fmt_num_dot(total_cur).rjust(enc_width), total_cur)
-
-        ac_total_txt = fmt_num_dot(ac_total)[-ac_width:].rjust(ac_width)
-
-        return make_state_block(
-            fmt_num_dot(total_prev).rjust(ant_width),
-            total_cur_txt,
-            var,
-            ac_total_txt,
-        )
-
-    # HEADER TOP
-    header_top = "| " + "".center(hora_width) + " "
-    header_top += cluster_header_block("Europa")
-    header_top += cluster_mid_header_block("Cluster")
-    header_top += cluster_header_block("America")
-    header_top += cluster_header_block("Brasil")
-    header_top += cluster_mid_header_block("Cluster")
-    header_top += cluster_header_block("Aplicaciones")
-    header_top += "|"
-
-    # SEPARADOR ENTRE HEADERS
-    mid_sep = "-" * visible_text_len(header_top)
-
-    # HEADER BOTTOM
-    header_bottom = "| " + "Hora".center(hora_width) + " "
-    header_bottom += cluster_subheader_block()
-    header_bottom += cluster_mid_header_block("Nodo")
-    header_bottom += cluster_subheader_block()
-    header_bottom += cluster_subheader_block()
-    header_bottom += cluster_mid_header_block("Nodo")
-    header_bottom += cluster_subheader_block()
-    header_bottom += "|"
-
-    sep = "-" * visible_text_len(header_bottom)
-
-    print(header_top)
-    print(mid_sep)
-    print(header_bottom)
-    print(sep)
-
-    for nodo in nodes:
-        line = f"| {timestamp.center(hora_width)} "
-        line += cluster_data_block("Europa", nodo)
-        line += make_mid_block(nodo)
-        line += cluster_data_block("America", nodo)
-        line += cluster_data_block("Brasil", nodo)
-        line += make_mid_block(nodo)
-        line += cluster_data_block("Aplicaciones", nodo)
-        line += "|"
-        print(line)
-
-    print(sep)
-
-    total_line = "| " + "".center(hora_width) + " "
-    total_line += cluster_total_block("Europa")
-    total_line += make_mid_block("")
-    total_line += cluster_total_block("America")
-    total_line += cluster_total_block("Brasil")
-    total_line += make_mid_block("")
-    total_line += cluster_total_block("Aplicaciones")
-    total_line += "|"
-
-    print(total_line)
-
-
 def print_cluster_peaks_table(
     node_peaks: Dict[str, Dict[str, Dict[str, object]]],
     total_peaks: Dict[str, Dict[str, object]],
@@ -158,7 +15,7 @@ def print_cluster_peaks_table(
     cluster_sep_plain = " || "
     cluster_sep_colored = f" {orange_cluster_sep()} "
 
-    cluster_chunk_width = hora_w + len(col_sep) + nodo_w + len(col_sep) + enc_w
+    cluster_chunk_width = nodo_w + len(col_sep) + hora_w + len(col_sep) + enc_w
 
     # HEADER TOP
     h1 = f"| {'Nivel'.ljust(row_w)}"
@@ -171,8 +28,8 @@ def print_cluster_peaks_table(
 
     # HEADER BOTTOM
     sub = (
-        f"{'Hora'.center(hora_w)}{col_sep}"
         f"{'Nodo'.center(nodo_w)}{col_sep}"
+        f"{'Hora'.center(hora_w)}{col_sep}"
         f"{'Encol.'.center(enc_w)}"
     )
 
@@ -206,9 +63,9 @@ def print_cluster_peaks_table(
             if pos < len(ranking):
                 hora, nodo, enc = ranking[pos]
                 enc_txt = queue_color(cluster, fmt_num_dot(enc).rjust(enc_w), enc)
-                chunk = f"{hora.ljust(hora_w)}{col_sep}{nodo.ljust(nodo_w)}{col_sep}{enc_txt}"
+                chunk = f"{nodo.ljust(nodo_w)}{col_sep}{hora.ljust(hora_w)}{col_sep}{enc_txt}"
             else:
-                chunk = f"{'--:--'.ljust(hora_w)}{col_sep}{'-'.ljust(nodo_w)}{col_sep}{'0'.rjust(enc_w)}"
+                chunk = f"{'-'.ljust(nodo_w)}{col_sep}{'--:--'.ljust(hora_w)}{col_sep}{'0'.rjust(enc_w)}"
 
             line += f"{cluster_sep_colored}{chunk}"
 
@@ -230,7 +87,7 @@ def print_cluster_peaks_table(
             CLUSTER_THRESHOLDS[cluster]["total_critical"],
         )
 
-        chunk = f"{hora.ljust(hora_w)}{col_sep}{'TOTAL'.ljust(nodo_w)}{col_sep}{total_txt}"
+        chunk = f"{'TOTAL'.ljust(nodo_w)}{col_sep}{hora.ljust(hora_w)}{col_sep}{total_txt}"
         total_line += f"{cluster_sep_colored}{chunk}"
 
     total_line += " |"
