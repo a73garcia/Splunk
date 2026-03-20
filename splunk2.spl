@@ -3,29 +3,18 @@ def print_summary_alerts_risk(
     previous_data: Dict[str, Dict[str, int]],
 ) -> None:
     totals = {}
-    estados_plain = []
-
     for cluster in cluster_order():
         rows = list(current_data.get(cluster, {}).values())
         total_queue = sum(r.encolados for r in rows)
         totals[cluster] = total_queue
-        estados_plain.append(total_status_text(cluster, total_queue))
 
-    cluster_w = 13
-    rota_w = 6
-    estado_w = max(8, max((len(s) for s in estados_plain), default=8))
-    var_title = "Última variación"
-    var_w = len(var_title)
+    total_w = 6
+    estado_w = len("CRITICAL")
 
     summary_lines = ["RESUMEN CLUSTERS", ""]
-
-    header = (
-        f"{'Cluster'.ljust(cluster_w)} | "
-        f"{'Rota'.rjust(rota_w)} | "
-        f"{'Estado'.ljust(estado_w)} | "
-        f"{var_title}"
+    summary_lines.append(
+        f"{'Cluster'.ljust(13)} | {'Total'.rjust(total_w)} | {'Estado'.ljust(estado_w)} | Última variación"
     )
-    summary_lines.append(header)
 
     for cluster in cluster_order():
         total = totals[cluster]
@@ -44,11 +33,12 @@ def print_summary_alerts_risk(
             else:
                 last_var = "="
 
+        total_txt = fmt_num_dot(total)
+        if len(total_txt) > total_w:
+            total_txt = total_txt[-total_w:]
+
         summary_lines.append(
-            f"{cluster.ljust(cluster_w)} | "
-            f"{fmt_num_dot(total).rjust(rota_w)} | "
-            f"{ansi_ljust(estado, estado_w)} | "
-            f"{last_var}"
+            f"{cluster.ljust(13)} | {total_txt.rjust(total_w)} | {ansi_ljust(estado, estado_w)} | {last_var}"
         )
 
     alert_lines = ["ALERTAS NODOS", ""]
@@ -64,39 +54,33 @@ def print_summary_alerts_risk(
             diag = diagnose_node(r, prev)
 
             if r.error:
-                alerts.append(f"{cluster}-{nodo}: offline ({r.error})")
-            elif diag["is_alert"]:
-                alerts.append(f"{cluster}-{nodo}: {diag['summary']}")
+                alerts.append(f"{RED}{nodo} sin respuesta ({cluster}){RESET}")
+                continue
 
-            if diag["is_risk"]:
-                risks.append(f"{cluster}-{nodo}: {diag['summary']}")
+            th = CLUSTER_THRESHOLDS[cluster]
+            if r.encolados >= th["critical"]:
+                alerts.append(f"{RED}{nodo} {cluster}: {fmt_num_dot(r.encolados)} en cola{RESET}")
+            elif r.encolados >= th["warning"]:
+                alerts.append(f"{YELLOW}{nodo} {cluster}: {fmt_num_dot(r.encolados)} en cola{RESET}")
+
+            if diag != "OK":
+                risks.append(natural_risk_text(cluster, nodo, diag))
 
     if not alerts:
-        alert_lines.append("Sin alertas")
+        alert_lines.append(f"{GREEN}No se han detectado alertas{RESET}")
     else:
-        alert_lines.extend(alerts[:8])
+        alert_lines.extend(alerts[:6])
 
     if not risks:
-        risk_lines.append("Sin riesgos")
+        risk_lines.append(f"{GREEN}No se han detectado riesgos{RESET}")
     else:
-        risk_lines.extend(risks[:8])
+        risk_lines.extend(risks[:6])
 
-    col1_w = max(visible_text_len(x) for x in summary_lines) if summary_lines else 20
-    col2_w = max(visible_text_len(x) for x in alert_lines) if alert_lines else 20
-    col3_w = max(visible_text_len(x) for x in risk_lines) if risk_lines else 20
+    w1, w2, w3 = choose_three_col_widths(summary_lines, alert_lines, risk_lines, 52, 34, 38)
 
     max_rows = max(len(summary_lines), len(alert_lines), len(risk_lines))
-
-    while len(summary_lines) < max_rows:
-        summary_lines.append("")
-    while len(alert_lines) < max_rows:
-        alert_lines.append("")
-    while len(risk_lines) < max_rows:
-        risk_lines.append("")
-
-    for a, b, c in zip(summary_lines, alert_lines, risk_lines):
-        print(
-            f"{ansi_ljust(a, col1_w)}   "
-            f"{ansi_ljust(b, col2_w)}   "
-            f"{ansi_ljust(c, col3_w)}"
-        )
+    for i in range(max_rows):
+        c1 = pad_or_trim(summary_lines[i], w1) if i < len(summary_lines) else " " * w1
+        c2 = pad_or_trim(alert_lines[i], w2) if i < len(alert_lines) else " " * w2
+        c3 = pad_or_trim(risk_lines[i], w3) if i < len(risk_lines) else " " * w3
+        print(f"{c1}   {c2}   {c3}")
