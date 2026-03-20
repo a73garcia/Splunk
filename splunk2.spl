@@ -1,109 +1,138 @@
-def print_queue_table(
-    timestamp: str,
+def print_node_health_table(
     current_data: Dict[str, Dict[str, Result]],
     previous_data: Dict[str, Dict[str, int]],
 ) -> None:
-    print("ESTADO ENCOLADOS NODOS\n")
+    print("SALUD OPERATIVA DE NODOS\n")
 
+    clusters = cluster_order()
     nodes = [f"ESA{i:02d}" for i in range(1, 21)]
 
-    ant_width = 8
-    enc_width = 9
-    var_width = 3
-    ac_width = 9
-    hora_width = 5
+    status_w = 8
+    metric_w = 5
 
-    # OJO:
-    # "Cluster" = 7 chars, "Nodo" = 4, "ESA20" = 5
-    # El ancho intermedio debe ser al menos 7 para que no se rompa la alineación.
+    # Mismo criterio que en la tabla de estado:
+    # el bloque intermedio debe soportar "Cluster", "Nodo" y "ESAxx"
     mid_label_width = max(
         len("Cluster"),
         len("Nodo"),
         max(len(n) for n in nodes),
     )
 
-    def make_state_block(ant: str, enc: str, var: str, ac: str) -> str:
-        return f"{orange_cluster_sep()} {ant} | {enc} | {var} | {ac} "
+    def make_health_block(status: str, cpu: str, ram: str, ci: str, co: str, hs: str) -> str:
+        return (
+            f"{orange_cluster_sep()} "
+            f"{status} | "
+            f"{cpu} | "
+            f"{ram} | "
+            f"{ci} | "
+            f"{co} | "
+            f"{hs} "
+        )
 
     def make_mid_block(text: str) -> str:
         return f"{orange_cluster_sep()} {text.center(mid_label_width)} "
 
-    sample_state_block = make_state_block(
-        "0".rjust(ant_width),
-        "0".rjust(enc_width),
-        "=".center(var_width),
-        "0".rjust(ac_width),
+    sample_health_block = make_health_block(
+        "online".ljust(status_w),
+        "100%".rjust(metric_w),
+        "100%".rjust(metric_w),
+        "9999".rjust(metric_w),
+        "9999".rjust(metric_w),
+        "100%".rjust(metric_w),
     )
 
-    state_block_visible = visible_text_len(sample_state_block)
+    health_block_visible = visible_text_len(sample_health_block)
     mid_block_visible = visible_text_len(make_mid_block("Cluster"))
 
     def cluster_header_block(name: str) -> str:
-        # ancho completo del bloque del cluster
-        inner_width = state_block_visible - 4
+        inner_width = health_block_visible - 4
         return f"{orange_cluster_sep()} {name.center(inner_width)} "
 
     def cluster_mid_header_block(text: str) -> str:
-        # mismo ancho exacto que la columna intermedia real
         inner_width = mid_block_visible - 4
         return f"{orange_cluster_sep()} {text.center(inner_width)} "
 
     def cluster_subheader_block() -> str:
-        return make_state_block(
-            "Anterior".center(ant_width),
-            "Encolados".center(enc_width),
-            "Var".center(var_width),
-            "AC".center(ac_width),
+        return make_health_block(
+            "Status".center(status_w),
+            "CPU".center(metric_w),
+            "RAM".center(metric_w),
+            "CI".center(metric_w),
+            "CO".center(metric_w),
+            "HS".center(metric_w),
         )
 
     def cluster_data_block(cluster: str, nodo: str) -> str:
         r = current_data.get(cluster, {}).get(nodo)
 
         if r is None:
-            ant = "0".rjust(ant_width)
-            enc = "0".rjust(enc_width)
-            var = "=".center(var_width)
-            ac = "0".rjust(ac_width)
+            status_txt = f"{RED}offline{RESET}"
+            cpu = 0
+            ram = 0
+            ci = 0
+            co = 0
+            hs = 0
         else:
             prev = get_prev_queue(previous_data, cluster, nodo)
-            ant = fmt_num_dot(prev).rjust(ant_width)
+            hs = health_score(r, prev)
 
-            enc_txt = fmt_num_dot(r.encolados).rjust(enc_width)
-            enc = queue_color(cluster, enc_txt, r.encolados)
+            if r.error:
+                status_txt = f"{RED}offline{RESET}"
+            elif str(r.status).lower() == "online":
+                status_txt = f"{GREEN}online{RESET}"
+            else:
+                status_txt = f"{YELLOW}{r.status}{RESET}"
 
-            var = trend_symbol(prev, r.encolados).center(var_width)
+            cpu = r.cpu
+            ram = r.ram
+            ci = r.conn_in
+            co = r.conn_out
 
-            ac_txt = fmt_num_dot(r.active_recips)
-            if len(ac_txt) > ac_width:
-                ac_txt = ac_txt[-ac_width:]
-            ac = ac_txt.rjust(ac_width)
+        cpu_str = f"{cpu}%"
+        ram_str = f"{ram}%"
+        hs_str = f"{hs}%"
 
-        return make_state_block(ant, enc, var, ac)
+        if len(cpu_str) > metric_w:
+            cpu_str = cpu_str[:metric_w]
+        if len(ram_str) > metric_w:
+            ram_str = ram_str[:metric_w]
+        if len(hs_str) > metric_w:
+            hs_str = hs_str[:metric_w]
 
-    def cluster_total_block(cluster: str) -> str:
-        total_cur = sum(r.encolados for r in current_data.get(cluster, {}).values())
-        total_prev = sum(previous_data.get(cluster, {}).values()) if cluster in previous_data else 0
-        var = trend_symbol(total_prev, total_cur).center(var_width)
-        ac_total = sum(r.active_recips for r in current_data.get(cluster, {}).values())
+        cpu_txt = color_by_threshold(
+            cpu_str.rjust(metric_w),
+            cpu,
+            ADV_THRESHOLDS["cpu_warning"],
+            ADV_THRESHOLDS["cpu_critical"],
+        )
+        ram_txt = color_by_threshold(
+            ram_str.rjust(metric_w),
+            ram,
+            ADV_THRESHOLDS["ram_warning"],
+            ADV_THRESHOLDS["ram_critical"],
+        )
+        hs_txt = health_color_text(hs, hs_str.rjust(metric_w))
 
-        total_cur_txt = queue_color(cluster, fmt_num_dot(total_cur).rjust(enc_width), total_cur)
+        ci_txt = fmt_num_dot(ci)
+        co_txt = fmt_num_dot(co)
+        if len(ci_txt) > metric_w:
+            ci_txt = ci_txt[-metric_w:]
+        if len(co_txt) > metric_w:
+            co_txt = co_txt[-metric_w:]
 
-        ac_total_txt = fmt_num_dot(ac_total)
-        if len(ac_total_txt) > ac_width:
-            ac_total_txt = ac_total_txt[-ac_width:]
-        ac_total_txt = ac_total_txt.rjust(ac_width)
-
-        return make_state_block(
-            fmt_num_dot(total_prev).rjust(ant_width),
-            total_cur_txt,
-            var,
-            ac_total_txt,
+        return make_health_block(
+            ansi_ljust(status_txt, status_w),
+            ansi_rjust(cpu_txt, metric_w),
+            ansi_rjust(ram_txt, metric_w),
+            ci_txt.rjust(metric_w),
+            co_txt.rjust(metric_w),
+            ansi_rjust(hs_txt, metric_w),
         )
 
     # =========================
     # HEADER FILA SUPERIOR
     # =========================
-    header_top = "| " + "".center(hora_width) + " "
+    header_top = "| " + "".center(mid_label_width) + " "
     header_top += cluster_header_block("Europa")
     header_top += cluster_mid_header_block("Cluster")
     header_top += cluster_header_block("America")
@@ -115,7 +144,7 @@ def print_queue_table(
     # =========================
     # HEADER FILA INFERIOR
     # =========================
-    header_bottom = "| " + "Hora".center(hora_width) + " "
+    header_bottom = "| " + "Nodo".center(mid_label_width) + " "
     header_bottom += cluster_subheader_block()
     header_bottom += cluster_mid_header_block("Nodo")
     header_bottom += cluster_subheader_block()
@@ -131,10 +160,10 @@ def print_queue_table(
     print(sep)
 
     # =========================
-    # FILAS DE DATOS
+    # FILAS
     # =========================
     for nodo in nodes:
-        line = f"| {timestamp.center(hora_width)} "
+        line = f"| {nodo.center(mid_label_width)} "
         line += cluster_data_block("Europa", nodo)
         line += make_mid_block(nodo)
         line += cluster_data_block("America", nodo)
@@ -145,17 +174,3 @@ def print_queue_table(
         print(line)
 
     print(sep)
-
-    # =========================
-    # FILA TOTAL
-    # =========================
-    total_line = "| " + "".center(hora_width) + " "
-    total_line += cluster_total_block("Europa")
-    total_line += make_mid_block("")
-    total_line += cluster_total_block("America")
-    total_line += cluster_total_block("Brasil")
-    total_line += make_mid_block("")
-    total_line += cluster_total_block("Aplicaciones")
-    total_line += "|"
-
-    print(total_line)
