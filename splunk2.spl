@@ -1,65 +1,133 @@
-index=siem-cloud-ciscoesa host="*.santandergroup-out.c3s2.iphmx.com" cef_6_header="Consolidated Log Event" cs1="*_OUT"
-| eval HoraE=strptime(start, "%a %b %d %H:%M:%S %Y"),
-       Horas=strptime(end, "%a %b %d %H:%M:%S %Y")
-| rename ESAMID AS MID
-         msg AS Asunto
-         cs4 AS MessageID
-         cs2 AS IP_Pais
-         user AS Sender
-         cs1 AS Politica
-         duser AS Recipient
-         cs3 AS Categoria
-         act AS Accion
-         cs6 AS Reputation
-         antivirus_verdict AS AV_Verdict
-         src_user_domain AS Domain
-         recipient_status AS Status
-         DMARC_verdict AS DMARC
-| eval ESA_Num=tonumber(replace(hostRaw,"esa","")),
-       Nodo=printf("ESA%02d", ESA_Num)
-| eval CES=case(
-    like(host, "%.santandergroup.c3s2.iphmx.com"), "EU",
-    like(host, "%.hc6154-33.iphmx.com"), "BR",
-    like(host, "%.hc5533-96.iphmx.com"), "APP DR",
-    like(host, "%.hc5532-55.iphmx.com"), "AM",
-    like(host, "%.santandergroup-out.c3s2.iphmx.com"), "APP"
-)
-| eval Recipient=split(Recipient, ";")
-| eval Dia=strftime(HoraE, "%d/%m/%y"),
-       Entrada=strftime(HoraE, "%H:%M"),
-       Salida=if(isnum(Horas), strftime(Horas, "%H:%M"), null())
-| eval QueueTime=if(isnum(HoraE) AND isnum(Horas) AND Horas>=HoraE, Horas-HoraE, null())
-| eval orden=case(
-    QueueTime < 60, 1,
-    QueueTime >= 60 AND QueueTime < 180, 2,
-    QueueTime >= 180 AND QueueTime < 300, 3,
-    QueueTime >= 300 AND QueueTime < 600, 4,
-    QueueTime >= 600 AND QueueTime < 1800, 5,
-    QueueTime >= 1800 AND QueueTime < 3600, 6,
-    QueueTime >= 3600, 7
-)
-| eval QueueRange=case(
-    orden=1, "1. Menos de 1 min",
-    orden=2, "2. Hasta 3 min",
-    orden=3, "3. Hasta 5 min",
-    orden=4, "4. Hasta 10 min",
-    orden=5, "5. Hasta 30 min",
-    orden=6, "6. Hasta 1 hora",
-    orden=7, "7. Mas de 1 hora"
-)
-| stats count as total by orden QueueRange
-| append [
-    | makeresults
-    | eval orden=1, QueueRange="1. Menos de 1 min", total=0
-    | append [| makeresults | eval orden=2, QueueRange="2. Hasta 3 min", total=0]
-    | append [| makeresults | eval orden=3, QueueRange="3. Hasta 5 min", total=0]
-    | append [| makeresults | eval orden=4, QueueRange="4. Hasta 10 min", total=0]
-    | append [| makeresults | eval orden=5, QueueRange="5. Hasta 30 min", total=0]
-    | append [| makeresults | eval orden=6, QueueRange="6. Hasta 1 hora", total=0]
-    | append [| makeresults | eval orden=7, QueueRange="7. Mas de 1 hora", total=0]
-]
-| stats sum(total) as count by orden QueueRange
-| fillnull value=0 count
-| sort 0 orden
-| eval count=tostring(count, "commas")
-| fields QueueRange count
+def print_queue_table(
+    timestamp: str,
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+) -> None:
+    print("ESTADO ENCOLADOS NODOS\n")
+
+    nodes = [f"ESA{i:02d}" for i in range(1, 21)]
+
+    ant_width = 8
+    enc_width = 9
+    var_width = 3
+    ac_width = 9
+    nodo_mid_width = 6
+
+    def make_state_block(ant: str, enc: str, var: str, ac: str) -> str:
+        return f"{orange_cluster_sep()} {ant} | {enc} | {var} | {ac} "
+
+    def make_nodo_mid_block(text: str) -> str:
+        return f"{orange_cluster_sep()} {text.center(nodo_mid_width)} "
+
+    sample_block = make_state_block(
+        "0".rjust(ant_width),
+        "0".rjust(enc_width),
+        "=".center(var_width),
+        "0".rjust(ac_width),
+    )
+    state_block_visible = visible_text_len(sample_block)
+
+    sample_nodo_block = make_nodo_mid_block("Nodo")
+    nodo_block_visible = visible_text_len(sample_nodo_block)
+
+    def cluster_header_block(name: str) -> str:
+        return f"{orange_cluster_sep()} {name.center(state_block_visible - 4)} "
+
+    def cluster_subheader_block() -> str:
+        return make_state_block(
+            "Anterior".rjust(ant_width),
+            "Encolados".rjust(enc_width),
+            "Var".center(var_width),
+            "AC".rjust(ac_width),
+        )
+
+    def cluster_data_block(cluster: str, nodo: str) -> str:
+        r = current_data.get(cluster, {}).get(nodo)
+        if r is None:
+            ant = "0".rjust(ant_width)
+            enc = "0".rjust(enc_width)
+            var = "=".center(var_width)
+            ac = "0".rjust(ac_width)
+        else:
+            prev = get_prev_queue(previous_data, cluster, nodo)
+            ant = fmt_num_dot(prev).rjust(ant_width)
+
+            enc_txt = fmt_num_dot(r.encolados).rjust(enc_width)
+            enc = queue_color(cluster, enc_txt, r.encolados)
+
+            var = trend_symbol(prev, r.encolados).center(var_width)
+
+            ac_txt = fmt_num_dot(r.active_recips)
+            if len(ac_txt) > ac_width:
+                ac_txt = ac_txt[-ac_width:]
+            ac = ac_txt.rjust(ac_width)
+
+        return make_state_block(ant, enc, var, ac)
+
+    def cluster_total_block(cluster: str) -> str:
+        total_cur = sum(r.encolados for r in current_data.get(cluster, {}).values())
+        total_prev = sum(previous_data.get(cluster, {}).values()) if cluster in previous_data else 0
+        var = trend_symbol(total_prev, total_cur).center(var_width)
+        ac_total = sum(r.active_recips for r in current_data.get(cluster, {}).values())
+
+        total_cur_txt = queue_color(cluster, fmt_num_dot(total_cur).rjust(enc_width), total_cur)
+
+        ac_total_txt = fmt_num_dot(ac_total)
+        if len(ac_total_txt) > ac_width:
+            ac_total_txt = ac_total_txt[-ac_width:]
+        ac_total_txt = ac_total_txt.rjust(ac_width)
+
+        return make_state_block(
+            fmt_num_dot(total_prev).rjust(ant_width),
+            total_cur_txt,
+            var,
+            ac_total_txt,
+        )
+
+    header = "| Hora  | Nodo  "
+    header += cluster_header_block("Europa")
+    header += f"{orange_cluster_sep()} {'Nodo'.center(nodo_block_visible - 4)} "
+    header += cluster_header_block("America")
+    header += cluster_header_block("Brasil")
+    header += f"{orange_cluster_sep()} {'Nodo'.center(nodo_block_visible - 4)} "
+    header += cluster_header_block("Aplicaciones")
+    header += "|"
+
+    subhdr = "|       |       "
+    subhdr += cluster_subheader_block()
+    subhdr += make_nodo_mid_block("Nodo")
+    subhdr += cluster_subheader_block()
+    subhdr += cluster_subheader_block()
+    subhdr += make_nodo_mid_block("Nodo")
+    subhdr += cluster_subheader_block()
+    subhdr += "|"
+
+    sep = "-" * visible_text_len(subhdr)
+
+    print(header)
+    print(subhdr)
+    print(sep)
+
+    for nodo in nodes:
+        line = f"| {timestamp.ljust(5)} | {nodo.ljust(5)} "
+        line += cluster_data_block("Europa", nodo)
+        line += make_nodo_mid_block(nodo)
+        line += cluster_data_block("America", nodo)
+        line += cluster_data_block("Brasil", nodo)
+        line += make_nodo_mid_block(nodo)
+        line += cluster_data_block("Aplicaciones", nodo)
+        line += "|"
+        print(line)
+
+    print(sep)
+
+    total_line = "|       | TOTAL "
+    total_line += cluster_total_block("Europa")
+    total_line += make_nodo_mid_block(" ")
+    total_line += cluster_total_block("America")
+    total_line += cluster_total_block("Brasil")
+    total_line += make_nodo_mid_block(" ")
+    total_line += cluster_total_block("Aplicaciones")
+    total_line += "|"
+
+    print(total_line)
