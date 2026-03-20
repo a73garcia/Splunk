@@ -1,41 +1,145 @@
-def esc_listener() -> None:
-    global current_screen
+TOTAL_SCREENS = 3
+current_screen = 0
+screen_lock = threading.Lock()
+stop_event = threading.Event()
+redraw_event = threading.Event()
+force_refresh_event = threading.Event()
+manual_refresh_mode = threading.Event()
 
-    if not WINDOWS:
-        return
 
-    while not stop_event.is_set():
-        if msvcrt.kbhit():
-            key = msvcrt.getch()
+def print_mode_banner(incidents_active: bool, manual_relaunch: bool) -> None:
+    if manual_relaunch:
+        print(f"{CYAN}Modo relanzado manual{RESET}\n")
+    elif incidents_active:
+        print(f"{YELLOW}Modo incidencias activo{RESET}\n")
+    else:
+        print(f"{GREEN}Modo normal{RESET}\n")
 
-            # ESC -> salir
-            if key == b"\x1b":
-                stop_event.set()
-                redraw_event.set()
-                force_refresh_event.set()
-                return
 
-            # 🔴 R -> refresco REAL (consulta a nodos)
-            if key in (b"r", b"R"):
-                force_refresh_event.set()
-                continue
+def draw_screen_1(
+    next_refresh_time: datetime,
+    refresh_seconds: int,
+    incidents_active: bool,
+    timestamp: str,
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+    node_peaks: Dict[str, Dict[str, Dict[str, object]]],
+    total_peaks: Dict[str, Dict[str, object]],
+    manual_relaunch: bool = False,
+) -> None:
+    with screen_lock:
+        screen = current_screen
 
-            # Teclas especiales (flechas)
-            if key in (b"\x00", b"\xe0"):
-                key2 = msvcrt.getch()
+    print_header_with_timer(get_screen_title(screen), next_refresh_time, refresh_seconds)
+    print_mode_banner(incidents_active, manual_relaunch)
 
-                with screen_lock:
-                    # ← izquierda
-                    if key2 == b"K":
-                        current_screen = (current_screen - 1) % TOTAL_SCREENS
-                        redraw_event.set()
+    print_summary_alerts_risk(current_data, previous_data)
+    print()
+    print_orange_separator()
+    print()
 
-                    # → derecha
-                    elif key2 == b"M":
-                        current_screen = (current_screen + 1) % TOTAL_SCREENS
-                        redraw_event.set()
+    print_queue_table(timestamp, current_data, previous_data)
+    print()
+    print_orange_separator()
+    print()
 
-        time.sleep(0.05)
+    print_cluster_peaks_table(node_peaks, total_peaks)
+    print_footer_help()
+
+
+def draw_screen_2(
+    next_refresh_time: datetime,
+    refresh_seconds: int,
+    incidents_active: bool,
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+    manual_relaunch: bool = False,
+) -> None:
+    with screen_lock:
+        screen = current_screen
+
+    print_header_with_timer(get_screen_title(screen), next_refresh_time, refresh_seconds)
+    print_mode_banner(incidents_active, manual_relaunch)
+
+    print_node_health_table(current_data, previous_data)
+    print()
+    print_orange_separator()
+    print()
+
+    print_rates_table(current_data, previous_data)
+    print_footer_help()
+
+
+def draw_screen_3(
+    next_refresh_time: datetime,
+    refresh_seconds: int,
+    incidents_active: bool,
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+    queue_history: Dict[str, Dict[str, List[int]]],
+    manual_relaunch: bool = False,
+) -> None:
+    with screen_lock:
+        screen = current_screen
+
+    print_header_with_timer(get_screen_title(screen), next_refresh_time, refresh_seconds)
+    print_mode_banner(incidents_active, manual_relaunch)
+
+    print_status_incidents(current_data)
+    print()
+    print_orange_separator()
+    print()
+
+    print_advanced_findings(current_data, previous_data, queue_history)
+    print_footer_help()
+
+
+def draw_current_screen(
+    next_refresh_time: datetime,
+    refresh_seconds: int,
+    incidents_active: bool,
+    timestamp: str,
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+    node_peaks: Dict[str, Dict[str, Dict[str, object]]],
+    total_peaks: Dict[str, Dict[str, object]],
+    queue_history: Dict[str, Dict[str, List[int]]],
+    manual_relaunch: bool = False,
+) -> None:
+    with screen_lock:
+        screen = current_screen
+
+    if screen == 0:
+        draw_screen_1(
+            next_refresh_time,
+            refresh_seconds,
+            incidents_active,
+            timestamp,
+            current_data,
+            previous_data,
+            node_peaks,
+            total_peaks,
+            manual_relaunch,
+        )
+    elif screen == 1:
+        draw_screen_2(
+            next_refresh_time,
+            refresh_seconds,
+            incidents_active,
+            current_data,
+            previous_data,
+            manual_relaunch,
+        )
+    else:
+        draw_screen_3(
+            next_refresh_time,
+            refresh_seconds,
+            incidents_active,
+            current_data,
+            previous_data,
+            queue_history,
+            manual_relaunch,
+        )
 
 
 def run_monitor(auth: Tuple[str, str]) -> None:
@@ -50,7 +154,7 @@ def run_monitor(auth: Tuple[str, str]) -> None:
     with requests.Session() as session:
         while not stop_event.is_set():
 
-            # 🔴 limpiamos flag de refresco al empezar ciclo
+            manual_relaunch = manual_refresh_mode.is_set()
             force_refresh_event.clear()
 
             now = datetime.now()
@@ -106,7 +210,12 @@ def run_monitor(auth: Tuple[str, str]) -> None:
                 node_peaks,
                 total_peaks,
                 queue_history,
+                manual_relaunch,
             ))
+
+            # Solo para esta iteración
+            if manual_relaunch:
+                manual_refresh_mode.clear()
 
             # =========================
             # ESPERA INTELIGENTE
@@ -128,12 +237,14 @@ def run_monitor(auth: Tuple[str, str]) -> None:
                         node_peaks,
                         total_peaks,
                         queue_history,
+                        False,
                     ))
 
-                # 🔴 R -> FORZAR NUEVA CONSULTA
+                # R -> FORZAR NUEVA CONSULTA
                 if force_refresh_event.is_set():
                     force_refresh_event.clear()
-                    break   # <- vuelve arriba y hace fetch real
+                    manual_refresh_mode.set()
+                    break
 
                 elapsed = time.time() - start_wait
                 if elapsed >= refresh_seconds:
@@ -150,7 +261,5 @@ def run_monitor(auth: Tuple[str, str]) -> None:
             }
 
     print("Monitor detenido")
-
-
 
 
