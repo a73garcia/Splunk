@@ -1,10 +1,102 @@
-def print_rates_table(
+def print_summary_alerts_risk(
     current_data: Dict[str, Dict[str, Result]],
     previous_data: Dict[str, Dict[str, int]],
 ) -> None:
-    print("RENDIMIENTO OPERATIVO POR CLUSTER\n")
+    totals = {}
+    estados_plain = []
+
+    for cluster in cluster_order():
+        rows = list(current_data.get(cluster, {}).values())
+        total_queue = sum(r.encolados for r in rows)
+        totals[cluster] = total_queue
+        estados_plain.append(total_status_text(cluster, total_queue))
 
     cluster_w = 13
-    num_w = 10
+    rota_w = 6
+    estado_w = max(8, max((len(s) for s in estados_plain), default=8))
+    var_title = "Última variación"
+    var_w = len(var_title)
 
-    term_w = terminal_width(180)
+    summary_lines = ["RESUMEN CLUSTERS", ""]
+
+    header = (
+        f"{'Cluster'.ljust(cluster_w)} | "
+        f"{'Rota'.rjust(rota_w)} | "
+        f"{'Estado'.ljust(estado_w)} | "
+        f"{var_title}"
+    )
+    summary_lines.append(header)
+
+    for cluster in cluster_order():
+        total = totals[cluster]
+        estado = total_status_colored(cluster, total)
+
+        if cluster not in previous_data or not previous_data.get(cluster):
+            last_var = "Sin histórico"
+        else:
+            cur_total = sum(r.encolados for r in current_data.get(cluster, {}).values())
+            prev_total = sum(previous_data.get(cluster, {}).values())
+            delta = cur_total - prev_total
+            if delta > 0:
+                last_var = f"+{fmt_num_dot(delta)}"
+            elif delta < 0:
+                last_var = f"{fmt_num_dot(delta)}"
+            else:
+                last_var = "="
+
+        summary_lines.append(
+            f"{cluster.ljust(cluster_w)} | "
+            f"{fmt_num_dot(total).rjust(rota_w)} | "
+            f"{ansi_ljust(estado, estado_w)} | "
+            f"{last_var}"
+        )
+
+    alert_lines = ["ALERTAS NODOS", ""]
+    risk_lines = ["NODOS EN RIESGO", ""]
+
+    alerts: List[str] = []
+    risks: List[str] = []
+
+    for cluster in cluster_order():
+        for nodo in sorted(current_data.get(cluster, {}).keys()):
+            r = current_data[cluster][nodo]
+            prev = get_prev_queue(previous_data, cluster, nodo)
+            diag = diagnose_node(r, prev)
+
+            if r.error:
+                alerts.append(f"{cluster}-{nodo}: offline ({r.error})")
+            elif diag["is_alert"]:
+                alerts.append(f"{cluster}-{nodo}: {diag['summary']}")
+
+            if diag["is_risk"]:
+                risks.append(f"{cluster}-{nodo}: {diag['summary']}")
+
+    if not alerts:
+        alert_lines.append("Sin alertas")
+    else:
+        alert_lines.extend(alerts[:8])
+
+    if not risks:
+        risk_lines.append("Sin riesgos")
+    else:
+        risk_lines.extend(risks[:8])
+
+    col1_w = max(visible_text_len(x) for x in summary_lines) if summary_lines else 20
+    col2_w = max(visible_text_len(x) for x in alert_lines) if alert_lines else 20
+    col3_w = max(visible_text_len(x) for x in risk_lines) if risk_lines else 20
+
+    max_rows = max(len(summary_lines), len(alert_lines), len(risk_lines))
+
+    while len(summary_lines) < max_rows:
+        summary_lines.append("")
+    while len(alert_lines) < max_rows:
+        alert_lines.append("")
+    while len(risk_lines) < max_rows:
+        risk_lines.append("")
+
+    for a, b, c in zip(summary_lines, alert_lines, risk_lines):
+        print(
+            f"{ansi_ljust(a, col1_w)}   "
+            f"{ansi_ljust(b, col2_w)}   "
+            f"{ansi_ljust(c, col3_w)}"
+        )
