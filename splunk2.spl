@@ -12,31 +12,41 @@ def print_queue_table(
     var_width = 3
     ac_width = 9
     hora_width = 5
-    nodo_mid_width = 6
+
+    # OJO:
+    # "Cluster" = 7 chars, "Nodo" = 4, "ESA20" = 5
+    # El ancho intermedio debe ser al menos 7 para que no se rompa la alineación.
+    mid_label_width = max(
+        len("Cluster"),
+        len("Nodo"),
+        max(len(n) for n in nodes),
+    )
 
     def make_state_block(ant: str, enc: str, var: str, ac: str) -> str:
         return f"{orange_cluster_sep()} {ant} | {enc} | {var} | {ac} "
 
-    def make_nodo_mid_block(text: str, width: int) -> str:
-        return f"{orange_cluster_sep()} {text.center(width)} "
+    def make_mid_block(text: str) -> str:
+        return f"{orange_cluster_sep()} {text.center(mid_label_width)} "
 
-    sample_block = make_state_block(
+    sample_state_block = make_state_block(
         "0".rjust(ant_width),
         "0".rjust(enc_width),
         "=".center(var_width),
         "0".rjust(ac_width),
     )
 
-    sample_nodo_block = make_nodo_mid_block("Nodo", nodo_mid_width)
-
-    # ancho real visible del bloque intermedio Cluster/Nodo
-    mid_block_width = visible_text_len(sample_nodo_block) - 4
+    state_block_visible = visible_text_len(sample_state_block)
+    mid_block_visible = visible_text_len(make_mid_block("Cluster"))
 
     def cluster_header_block(name: str) -> str:
-        return f"{orange_cluster_sep()} {name.center(visible_text_len(sample_block) - 4)} "
+        # ancho completo del bloque del cluster
+        inner_width = state_block_visible - 4
+        return f"{orange_cluster_sep()} {name.center(inner_width)} "
 
     def cluster_mid_header_block(text: str) -> str:
-        return f"{orange_cluster_sep()} {text.center(mid_block_width)} "
+        # mismo ancho exacto que la columna intermedia real
+        inner_width = mid_block_visible - 4
+        return f"{orange_cluster_sep()} {text.center(inner_width)} "
 
     def cluster_subheader_block() -> str:
         return make_state_block(
@@ -107,10 +117,10 @@ def print_queue_table(
     # =========================
     header_bottom = "| " + "Hora".center(hora_width) + " "
     header_bottom += cluster_subheader_block()
-    header_bottom += make_nodo_mid_block("Nodo", mid_block_width)
+    header_bottom += cluster_mid_header_block("Nodo")
     header_bottom += cluster_subheader_block()
     header_bottom += cluster_subheader_block()
-    header_bottom += make_nodo_mid_block("Nodo", mid_block_width)
+    header_bottom += cluster_mid_header_block("Nodo")
     header_bottom += cluster_subheader_block()
     header_bottom += "|"
 
@@ -126,10 +136,10 @@ def print_queue_table(
     for nodo in nodes:
         line = f"| {timestamp.center(hora_width)} "
         line += cluster_data_block("Europa", nodo)
-        line += make_nodo_mid_block(nodo, mid_block_width)
+        line += make_mid_block(nodo)
         line += cluster_data_block("America", nodo)
         line += cluster_data_block("Brasil", nodo)
-        line += make_nodo_mid_block(nodo, mid_block_width)
+        line += make_mid_block(nodo)
         line += cluster_data_block("Aplicaciones", nodo)
         line += "|"
         print(line)
@@ -141,10 +151,10 @@ def print_queue_table(
     # =========================
     total_line = "| " + "".center(hora_width) + " "
     total_line += cluster_total_block("Europa")
-    total_line += make_nodo_mid_block("", mid_block_width)
+    total_line += make_mid_block("")
     total_line += cluster_total_block("America")
     total_line += cluster_total_block("Brasil")
-    total_line += make_nodo_mid_block("", mid_block_width)
+    total_line += make_mid_block("")
     total_line += cluster_total_block("Aplicaciones")
     total_line += "|"
 
