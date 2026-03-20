@@ -128,7 +128,11 @@ CSV_HEADERS = [
     "error",
 ]
 
+TOTAL_SCREENS = 3
+current_screen = 0
+screen_lock = threading.Lock()
 stop_event = threading.Event()
+redraw_event = threading.Event()
 
 
 # =========================================================
@@ -382,11 +386,23 @@ def get_prev_queue(previous_data: Dict[str, Dict[str, int]], cluster: str, nodo:
     return previous_data.get(cluster, {}).get(nodo, 0)
 
 
+def get_screen_title(screen: int) -> str:
+    return f"MONITOR COLAS ESA - PANTALLA {screen + 1}/{TOTAL_SCREENS}"
+
+
 def print_header_with_timer(title: str, next_refresh_time: datetime, refresh_seconds: int) -> None:
     term_w = terminal_width(180)
     timer_txt = f"Next update {next_refresh_time.strftime('%H:%M:%S')} ({refresh_seconds}s)"
     spaces = max(1, term_w - len(strip_ansi(title)) - len(strip_ansi(timer_txt)))
     print(f"{BOLD}{title}{RESET}{' ' * spaces}{CYAN}{timer_txt}{RESET}\n")
+
+
+def print_footer_help() -> None:
+    print(f"\nCSV mensuales en: {CSV_OUTPUT_DIR}")
+    if WINDOWS:
+        print("Pulsa ← / → para cambiar de pantalla | ESC para salir")
+    else:
+        print("Pulsa Ctrl+C para salir")
 
 
 # =========================================================
@@ -596,16 +612,13 @@ def print_cluster_peaks_table(
 
     cluster_chunk_width = nodo_w + len(col_sep) + hora_w + len(col_sep) + enc_w
 
-    # HEADER TOP
     h1 = f"| {'Nivel'.ljust(row_w)}"
     for cluster in clusters:
         h1 += f"{cluster_sep_colored}{cluster.center(cluster_chunk_width)}"
     h1 += " |"
 
-    # HEADER SEPARATOR
     mid_sep = "-" * visible_text_len(h1)
 
-    # HEADER BOTTOM
     sub = (
         f"{'Nodo'.center(nodo_w)}{col_sep}"
         f"{'Hora'.center(hora_w)}{col_sep}"
@@ -747,18 +760,35 @@ def persist_current_data_to_csv(current_data: Dict[str, Dict[str, Result]], now:
 
 
 # =========================================================
-# ESC LISTENER
+# KEYBOARD LISTENER
 # =========================================================
 def esc_listener() -> None:
+    global current_screen
+
     if not WINDOWS:
         return
+
     while not stop_event.is_set():
         if msvcrt.kbhit():
             key = msvcrt.getch()
+
             if key == b"\x1b":
                 stop_event.set()
+                redraw_event.set()
                 return
-        time.sleep(0.1)
+
+            if key in (b"\x00", b"\xe0"):
+                key2 = msvcrt.getch()
+
+                with screen_lock:
+                    if key2 == b"K":
+                        current_screen = (current_screen - 1) % TOTAL_SCREENS
+                        redraw_event.set()
+                    elif key2 == b"M":
+                        current_screen = (current_screen + 1) % TOTAL_SCREENS
+                        redraw_event.set()
+
+        time.sleep(0.05)
 
 
 # =========================================================
@@ -938,13 +968,15 @@ def fetch_cluster(
 ) -> List[Result]:
     cluster = group["cluster"]
     pattern = group["pattern"]
+    start = group.get("start", 1)
+    end = group.get("end", 20)
 
     results: List[Result] = []
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         futures = [
             ex.submit(fetch_one, session, pattern.format(idx=i), auth, timestamp, cluster, i)
-            for i in range(1, 21)
+            for i in range(start, end + 1)
         ]
         for fut in as_completed(futures):
             results.append(fut.result())
@@ -1189,11 +1221,7 @@ def print_node_health_table(
     status_w = 8
     metric_w = 5
 
-    mid_label_width = max(
-        len("Cluster"),
-        len("Nodo"),
-        max(len(n) for n in nodes),
-    )
+    mid_label_width = max(len("Cluster"), len("Nodo"), max(len(n) for n in nodes))
 
     def make_health_block(status: str, cpu: str, ram: str, ci: str, co: str, hs: str) -> str:
         return (
@@ -1522,7 +1550,10 @@ def draw_screen_1(
     node_peaks: Dict[str, Dict[str, Dict[str, object]]],
     total_peaks: Dict[str, Dict[str, object]],
 ) -> None:
-    print_header_with_timer("MONITOR COLAS ESA - PANTALLA 1/3", next_refresh_time, refresh_seconds)
+    with screen_lock:
+        screen = current_screen
+
+    print_header_with_timer(get_screen_title(screen), next_refresh_time, refresh_seconds)
 
     if incidents_active:
         print(f"{YELLOW}Modo incidencias activo{RESET}\n")
@@ -1540,12 +1571,7 @@ def draw_screen_1(
     print()
 
     print_cluster_peaks_table(node_peaks, total_peaks)
-
-    print(f"\nCSV mensuales en: {CSV_OUTPUT_DIR}")
-    if WINDOWS:
-        print("Pulsa ESC para salir")
-    else:
-        print("Pulsa Ctrl+C para salir")
+    print_footer_help()
 
 
 def draw_screen_2(
@@ -1555,7 +1581,10 @@ def draw_screen_2(
     current_data: Dict[str, Dict[str, Result]],
     previous_data: Dict[str, Dict[str, int]],
 ) -> None:
-    print_header_with_timer("MONITOR COLAS ESA - PANTALLA 2/3", next_refresh_time, refresh_seconds)
+    with screen_lock:
+        screen = current_screen
+
+    print_header_with_timer(get_screen_title(screen), next_refresh_time, refresh_seconds)
 
     if incidents_active:
         print(f"{YELLOW}Modo incidencias activo{RESET}\n")
@@ -1568,12 +1597,7 @@ def draw_screen_2(
     print()
 
     print_rates_table(current_data, previous_data)
-
-    print(f"\nCSV mensuales en: {CSV_OUTPUT_DIR}")
-    if WINDOWS:
-        print("Pulsa ESC para salir")
-    else:
-        print("Pulsa Ctrl+C para salir")
+    print_footer_help()
 
 
 def draw_screen_3(
@@ -1584,7 +1608,10 @@ def draw_screen_3(
     previous_data: Dict[str, Dict[str, int]],
     queue_history: Dict[str, Dict[str, List[int]]],
 ) -> None:
-    print_header_with_timer("MONITOR COLAS ESA - PANTALLA 3/3", next_refresh_time, refresh_seconds)
+    with screen_lock:
+        screen = current_screen
+
+    print_header_with_timer(get_screen_title(screen), next_refresh_time, refresh_seconds)
 
     if incidents_active:
         print(f"{YELLOW}Modo incidencias activo{RESET}\n")
@@ -1597,12 +1624,51 @@ def draw_screen_3(
     print()
 
     print_advanced_findings(current_data, previous_data, queue_history)
+    print_footer_help()
 
-    print(f"\nCSV mensuales en: {CSV_OUTPUT_DIR}")
-    if WINDOWS:
-        print("Pulsa ESC para salir")
+
+def draw_current_screen(
+    next_refresh_time: datetime,
+    refresh_seconds: int,
+    incidents_active: bool,
+    timestamp: str,
+    current_data: Dict[str, Dict[str, Result]],
+    previous_data: Dict[str, Dict[str, int]],
+    node_peaks: Dict[str, Dict[str, Dict[str, object]]],
+    total_peaks: Dict[str, Dict[str, object]],
+    queue_history: Dict[str, Dict[str, List[int]]],
+) -> None:
+    with screen_lock:
+        screen = current_screen
+
+    if screen == 0:
+        draw_screen_1(
+            next_refresh_time,
+            refresh_seconds,
+            incidents_active,
+            timestamp,
+            current_data,
+            previous_data,
+            node_peaks,
+            total_peaks,
+        )
+    elif screen == 1:
+        draw_screen_2(
+            next_refresh_time,
+            refresh_seconds,
+            incidents_active,
+            current_data,
+            previous_data,
+        )
     else:
-        print("Pulsa Ctrl+C para salir")
+        draw_screen_3(
+            next_refresh_time,
+            refresh_seconds,
+            incidents_active,
+            current_data,
+            previous_data,
+            queue_history,
+        )
 
 
 # =========================================================
@@ -1613,7 +1679,6 @@ def run_monitor(auth: Tuple[str, str]) -> None:
     queue_history: Dict[str, Dict[str, List[int]]] = {}
     node_peaks: Dict[str, Dict[str, Dict[str, object]]] = {}
     total_peaks: Dict[str, Dict[str, object]] = {}
-    screen_index = 0
 
     listener = threading.Thread(target=esc_listener, daemon=True)
     listener.start()
@@ -1644,18 +1709,27 @@ def run_monitor(auth: Tuple[str, str]) -> None:
 
             update_cluster_peaks(current_data, node_peaks, total_peaks, timestamp)
 
-            previous_data_snapshot = {
-                c: {n: r.encolados for n, r in m.items()}
-                for c, m in current_data.items()
-            }
-
             incidents_active = has_incidents(current_data)
             refresh_seconds = REFRESH_SECONDS_INCIDENT if incidents_active else REFRESH_SECONDS_NORMAL
             next_refresh_time = datetime.now() + timedelta(seconds=refresh_seconds)
 
-            def draw() -> None:
-                if screen_index == 0:
-                    draw_screen_1(
+            render_screen(lambda: draw_current_screen(
+                next_refresh_time,
+                refresh_seconds,
+                incidents_active,
+                timestamp,
+                current_data,
+                previous_data,
+                node_peaks,
+                total_peaks,
+                queue_history,
+            ))
+
+            start_wait = time.time()
+            while not stop_event.is_set():
+                if redraw_event.is_set():
+                    redraw_event.clear()
+                    render_screen(lambda: draw_current_screen(
                         next_refresh_time,
                         refresh_seconds,
                         incidents_active,
@@ -1664,34 +1738,19 @@ def run_monitor(auth: Tuple[str, str]) -> None:
                         previous_data,
                         node_peaks,
                         total_peaks,
-                    )
-                elif screen_index == 1:
-                    draw_screen_2(
-                        next_refresh_time,
-                        refresh_seconds,
-                        incidents_active,
-                        current_data,
-                        previous_data,
-                    )
-                else:
-                    draw_screen_3(
-                        next_refresh_time,
-                        refresh_seconds,
-                        incidents_active,
-                        current_data,
-                        previous_data,
                         queue_history,
-                    )
+                    ))
 
-            render_screen(draw)
+                elapsed = time.time() - start_wait
+                if elapsed >= refresh_seconds:
+                    break
 
-            slept = 0.0
-            while slept < refresh_seconds and not stop_event.is_set():
                 time.sleep(0.1)
-                slept += 0.1
 
-            screen_index = (screen_index + 1) % 3
-            previous_data = previous_data_snapshot
+            previous_data = {
+                c: {n: r.encolados for n, r in m.items()}
+                for c, m in current_data.items()
+            }
 
     print("Monitor detenido")
 
