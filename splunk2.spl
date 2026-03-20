@@ -4,14 +4,12 @@ def print_node_health_table(
 ) -> None:
     print("SALUD OPERATIVA DE NODOS\n")
 
-    clusters = cluster_order()
     nodes = [f"ESA{i:02d}" for i in range(1, 21)]
 
     status_w = 8
     metric_w = 5
 
-    # Mismo criterio que en la tabla de estado:
-    # el bloque intermedio debe soportar "Cluster", "Nodo" y "ESAxx"
+    # ancho común para Cluster / Nodo
     mid_label_width = max(
         len("Cluster"),
         len("Nodo"),
@@ -32,7 +30,7 @@ def print_node_health_table(
     def make_mid_block(text: str) -> str:
         return f"{orange_cluster_sep()} {text.center(mid_label_width)} "
 
-    sample_health_block = make_health_block(
+    sample_block = make_health_block(
         "online".ljust(status_w),
         "100%".rjust(metric_w),
         "100%".rjust(metric_w),
@@ -41,16 +39,14 @@ def print_node_health_table(
         "100%".rjust(metric_w),
     )
 
-    health_block_visible = visible_text_len(sample_health_block)
-    mid_block_visible = visible_text_len(make_mid_block("Cluster"))
+    block_visible = visible_text_len(sample_block)
+    mid_visible = visible_text_len(make_mid_block("Cluster"))
 
     def cluster_header_block(name: str) -> str:
-        inner_width = health_block_visible - 4
-        return f"{orange_cluster_sep()} {name.center(inner_width)} "
+        return f"{orange_cluster_sep()} {name.center(block_visible - 4)} "
 
     def cluster_mid_header_block(text: str) -> str:
-        inner_width = mid_block_visible - 4
-        return f"{orange_cluster_sep()} {text.center(inner_width)} "
+        return f"{orange_cluster_sep()} {text.center(mid_visible - 4)} "
 
     def cluster_subheader_block() -> str:
         return make_health_block(
@@ -67,11 +63,7 @@ def print_node_health_table(
 
         if r is None:
             status_txt = f"{RED}offline{RESET}"
-            cpu = 0
-            ram = 0
-            ci = 0
-            co = 0
-            hs = 0
+            cpu = ram = ci = co = hs = 0
         else:
             prev = get_prev_queue(previous_data, cluster, nodo)
             hs = health_score(r, prev)
@@ -88,51 +80,28 @@ def print_node_health_table(
             ci = r.conn_in
             co = r.conn_out
 
-        cpu_str = f"{cpu}%"
-        ram_str = f"{ram}%"
-        hs_str = f"{hs}%"
+        cpu_txt = color_by_threshold(f"{cpu}%".rjust(metric_w), cpu,
+                                    ADV_THRESHOLDS["cpu_warning"], ADV_THRESHOLDS["cpu_critical"])
+        ram_txt = color_by_threshold(f"{ram}%".rjust(metric_w), ram,
+                                    ADV_THRESHOLDS["ram_warning"], ADV_THRESHOLDS["ram_critical"])
+        hs_txt = health_color_text(hs, f"{hs}%".rjust(metric_w))
 
-        if len(cpu_str) > metric_w:
-            cpu_str = cpu_str[:metric_w]
-        if len(ram_str) > metric_w:
-            ram_str = ram_str[:metric_w]
-        if len(hs_str) > metric_w:
-            hs_str = hs_str[:metric_w]
-
-        cpu_txt = color_by_threshold(
-            cpu_str.rjust(metric_w),
-            cpu,
-            ADV_THRESHOLDS["cpu_warning"],
-            ADV_THRESHOLDS["cpu_critical"],
-        )
-        ram_txt = color_by_threshold(
-            ram_str.rjust(metric_w),
-            ram,
-            ADV_THRESHOLDS["ram_warning"],
-            ADV_THRESHOLDS["ram_critical"],
-        )
-        hs_txt = health_color_text(hs, hs_str.rjust(metric_w))
-
-        ci_txt = fmt_num_dot(ci)
-        co_txt = fmt_num_dot(co)
-        if len(ci_txt) > metric_w:
-            ci_txt = ci_txt[-metric_w:]
-        if len(co_txt) > metric_w:
-            co_txt = co_txt[-metric_w:]
+        ci_txt = fmt_num_dot(ci)[-metric_w:].rjust(metric_w)
+        co_txt = fmt_num_dot(co)[-metric_w:].rjust(metric_w)
 
         return make_health_block(
             ansi_ljust(status_txt, status_w),
             ansi_rjust(cpu_txt, metric_w),
             ansi_rjust(ram_txt, metric_w),
-            ci_txt.rjust(metric_w),
-            co_txt.rjust(metric_w),
+            ci_txt,
+            co_txt,
             ansi_rjust(hs_txt, metric_w),
         )
 
     # =========================
-    # HEADER FILA SUPERIOR
+    # HEADER SUPERIOR
     # =========================
-    header_top = "| " + "".center(mid_label_width) + " "
+    header_top = "| "
     header_top += cluster_header_block("Europa")
     header_top += cluster_mid_header_block("Cluster")
     header_top += cluster_header_block("America")
@@ -142,9 +111,14 @@ def print_node_health_table(
     header_top += "|"
 
     # =========================
-    # HEADER FILA INFERIOR
+    # SEPARADOR ENTRE HEADERS
     # =========================
-    header_bottom = "| " + "Nodo".center(mid_label_width) + " "
+    mid_sep = "-" * visible_text_len(header_top)
+
+    # =========================
+    # HEADER INFERIOR
+    # =========================
+    header_bottom = "| "
     header_bottom += cluster_subheader_block()
     header_bottom += cluster_mid_header_block("Nodo")
     header_bottom += cluster_subheader_block()
@@ -156,6 +130,7 @@ def print_node_health_table(
     sep = "-" * visible_text_len(header_bottom)
 
     print(header_top)
+    print(mid_sep)
     print(header_bottom)
     print(sep)
 
@@ -163,7 +138,7 @@ def print_node_health_table(
     # FILAS
     # =========================
     for nodo in nodes:
-        line = f"| {nodo.center(mid_label_width)} "
+        line = "| "
         line += cluster_data_block("Europa", nodo)
         line += make_mid_block(nodo)
         line += cluster_data_block("America", nodo)
