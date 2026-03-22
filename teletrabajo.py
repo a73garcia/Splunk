@@ -241,18 +241,10 @@ class TeletrabajoApp:
             "total_calculo": total,
         }
 
-    def obtener_trimestre(self, fecha):
-        trimestre = ((fecha.month - 1) // 3) + 1
-        mes_inicio = (trimestre - 1) * 3 + 1
-        inicio = fecha.replace(month=mes_inicio, day=1)
-
-        if mes_inicio == 10:
-            fin = fecha.replace(month=12, day=31)
-        else:
-            siguiente = fecha.replace(month=mes_inicio + 3, day=1)
-            fin = siguiente - timedelta(days=1)
-
-        return trimestre, inicio, fin
+    def obtener_ultimos_3_meses(self, fecha):
+        fin = fecha
+        inicio = fecha - timedelta(days=89)
+        return inicio, fin
 
     def calcular_recomendacion_semanal(self):
         hoy = datetime.today()
@@ -443,7 +435,7 @@ class TeletrabajoApp:
         else:
             fin_mes = hoy.replace(month=hoy.month + 1, day=1) - timedelta(days=1)
 
-        trimestre, inicio_trim, fin_trim = self.obtener_trimestre(hoy)
+        inicio_trim, fin_trim = self.obtener_ultimos_3_meses(hoy)
         resumen_mes = self.contar_periodo(inicio_mes, fin_mes)
         resumen_trim = self.contar_periodo(inicio_trim, fin_trim)
 
@@ -458,7 +450,7 @@ class TeletrabajoApp:
 
         self.crear_tarjeta_periodo(
             stats_row,
-            f"Trimestre actual (T{trimestre} {hoy.year})",
+            f"Ultimos 3 meses ({inicio_trim.strftime('%Y-%m-%d')} a {fin_trim.strftime('%Y-%m-%d')})",
             resumen_trim,
         ).pack(side="left", fill="both", expand=True, padx=(6, 0))
 
