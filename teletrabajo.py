@@ -44,8 +44,8 @@ class TeletrabajoApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Control de teletrabajo")
-        self.root.geometry("1280x820")
-        self.root.minsize(1080, 700)
+        self.root.geometry("1320x860")
+        self.root.minsize(1120, 720)
         self.root.configure(bg=COLOR_BG)
 
         self.style = ttk.Style()
@@ -87,16 +87,59 @@ class TeletrabajoApp:
     def configurar_estilos(self):
         self.style.configure("App.TFrame", background=COLOR_BG)
         self.style.configure("Card.TFrame", background=COLOR_CARD)
-        self.style.configure("Title.TLabel", background=COLOR_BG, foreground=COLOR_TEXT, font=("Segoe UI", 20, "bold"))
-        self.style.configure("SubTitle.TLabel", background=COLOR_BG, foreground=COLOR_MUTED, font=("Segoe UI", 10))
-        self.style.configure("Section.TLabel", background=COLOR_CARD, foreground=COLOR_TEXT, font=("Segoe UI", 12, "bold"))
-        self.style.configure("CardText.TLabel", background=COLOR_CARD, foreground=COLOR_TEXT, font=("Segoe UI", 10))
-        self.style.configure("Muted.TLabel", background=COLOR_CARD, foreground=COLOR_MUTED, font=("Segoe UI", 9))
-        self.style.configure("TopInfo.TLabel", background=COLOR_BG, foreground=COLOR_MUTED, font=("Segoe UI", 10, "italic"))
-        self.style.configure("Primary.TButton", font=("Segoe UI", 10, "bold"), padding=(12, 8))
-        self.style.configure("Secondary.TButton", font=("Segoe UI", 10), padding=(12, 8))
+        self.style.configure(
+            "Title.TLabel",
+            background=COLOR_BG,
+            foreground=COLOR_TEXT,
+            font=("Segoe UI", 20, "bold"),
+        )
+        self.style.configure(
+            "SubTitle.TLabel",
+            background=COLOR_BG,
+            foreground=COLOR_MUTED,
+            font=("Segoe UI", 10),
+        )
+        self.style.configure(
+            "Section.TLabel",
+            background=COLOR_CARD,
+            foreground=COLOR_TEXT,
+            font=("Segoe UI", 12, "bold"),
+        )
+        self.style.configure(
+            "CardText.TLabel",
+            background=COLOR_CARD,
+            foreground=COLOR_TEXT,
+            font=("Segoe UI", 10),
+        )
+        self.style.configure(
+            "Muted.TLabel",
+            background=COLOR_CARD,
+            foreground=COLOR_MUTED,
+            font=("Segoe UI", 9),
+        )
+        self.style.configure(
+            "TopInfo.TLabel",
+            background=COLOR_BG,
+            foreground=COLOR_MUTED,
+            font=("Segoe UI", 10, "italic"),
+        )
+        self.style.configure(
+            "Primary.TButton",
+            font=("Segoe UI", 10, "bold"),
+            padding=(12, 8),
+        )
+        self.style.configure(
+            "Secondary.TButton",
+            font=("Segoe UI", 10),
+            padding=(12, 8),
+        )
         self.style.configure("TEntry", padding=6)
         self.style.configure("TCombobox", padding=6)
+        self.style.configure("Future.Treeview", rowheight=28, font=("Segoe UI", 10))
+        self.style.configure(
+            "Future.Treeview.Heading",
+            font=("Segoe UI", 10, "bold"),
+        )
 
     def clear_view(self):
         for w in self.topbar.winfo_children():
@@ -132,7 +175,9 @@ class TeletrabajoApp:
 
     def completar_fines_de_semana_faltantes(self):
         if self.datos:
-            fechas = sorted(datetime.strptime(f, "%Y-%m-%d").date() for f in self.datos.keys())
+            fechas = sorted(
+                datetime.strptime(f, "%Y-%m-%d").date() for f in self.datos.keys()
+            )
             inicio = fechas[0]
         else:
             inicio = date.today()
@@ -169,6 +214,7 @@ class TeletrabajoApp:
         while actual <= fin:
             fecha_str = actual.strftime("%Y-%m-%d")
             estado = self.datos.get(fecha_str)
+
             if estado == "teletrabajo":
                 tt += 1
             elif estado == "oficina":
@@ -181,6 +227,7 @@ class TeletrabajoApp:
                 fest += 1
             elif estado == "fin de semana":
                 fs += 1
+
             actual += timedelta(days=1)
 
         total = tt + of
@@ -198,11 +245,13 @@ class TeletrabajoApp:
         trimestre = ((fecha.month - 1) // 3) + 1
         mes_inicio = (trimestre - 1) * 3 + 1
         inicio = fecha.replace(month=mes_inicio, day=1)
+
         if mes_inicio == 10:
             fin = fecha.replace(month=12, day=31)
         else:
             siguiente = fecha.replace(month=mes_inicio + 3, day=1)
             fin = siguiente - timedelta(days=1)
+
         return trimestre, inicio, fin
 
     def calcular_recomendacion_semanal(self):
@@ -228,8 +277,10 @@ class TeletrabajoApp:
         total_final_estimado = total + dias_restantes_laborables
         objetivo_tt = round(total_final_estimado * 0.6)
         recomendados_tt = max(0, objetivo_tt - tt)
+
         if recomendados_tt > dias_restantes_laborables:
             recomendados_tt = dias_restantes_laborables
+
         recomendados_of = max(0, dias_restantes_laborables - recomendados_tt)
 
         if dias_restantes_laborables == 0:
@@ -242,9 +293,51 @@ class TeletrabajoApp:
             return "Semana cerrada: objetivo 60/40 cumplido"
 
         return (
-            f"Semana {inicio_semana.strftime('%Y-%m-%d')} a {fin_semana.strftime('%Y-%m-%d')}  |  "
+            f"Semana {inicio_semana.strftime('%Y-%m-%d')} a "
+            f"{fin_semana.strftime('%Y-%m-%d')}  |  "
             f"Pendiente: TT {recomendados_tt}  /  OF {recomendados_of}"
         )
+
+    def get_resumen_anual_disfrute(self):
+        year = date.today().year
+        inicio = date(year, 1, 1)
+        fin = date(year, 12, 31)
+        resumen = self.contar_periodo(inicio, fin)
+
+        vacaciones_disfrutadas = resumen["vacaciones"]
+        asuntos_disfrutados = resumen["asuntos_propios"]
+
+        return {
+            "vacaciones_disfrutadas": vacaciones_disfrutadas,
+            "vacaciones_pendientes": max(
+                0, VACACIONES_TOTALES - vacaciones_disfrutadas
+            ),
+            "asuntos_disfrutados": asuntos_disfrutados,
+            "asuntos_pendientes": max(
+                0, ASUNTOS_PROPIOS_TOTALES - asuntos_disfrutados
+            ),
+            "anio": year,
+        }
+
+    def get_dias_futuros_solicitados(self):
+        hoy = date.today()
+        futuros = []
+        for fecha_str, estado in sorted(self.datos.items()):
+            try:
+                fecha_obj = datetime.strptime(fecha_str, "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if fecha_obj > hoy:
+                futuros.append((fecha_obj, estado))
+        return futuros
+
+    def get_color_por_desviacion(self, pct_tt):
+        desviacion = abs(pct_tt - 60)
+        if desviacion <= 2:
+            return "#16a34a"
+        if desviacion <= 5:
+            return "#f59e0b"
+        return "#dc2626"
 
     def handle_key_5(self, event=None):
         self.root.destroy()
@@ -257,9 +350,15 @@ class TeletrabajoApp:
         if self.calendar_active:
             self.mes_siguiente()
 
-    def render_topbar(self, titulo, subtitulo="Pulsa la tecla 5 para salir de la aplicacion"):
+    def render_topbar(
+        self,
+        titulo,
+        subtitulo="Pulsa la tecla 5 para salir de la aplicacion",
+    ):
         ttk.Label(self.topbar, text=titulo, style="Title.TLabel").pack(side="left")
-        ttk.Label(self.topbar, text=subtitulo, style="TopInfo.TLabel").pack(side="right", pady=(8, 0))
+        ttk.Label(self.topbar, text=subtitulo, style="TopInfo.TLabel").pack(
+            side="right", pady=(8, 0)
+        )
 
     def render_inicio(self):
         hoy = datetime.today().strftime("%Y-%m-%d")
@@ -285,14 +384,26 @@ class TeletrabajoApp:
 
         hoy = datetime.today().strftime("%Y-%m-%d")
 
-        ttk.Label(card, text="Hoy no tiene registro", style="Section.TLabel").pack(anchor="w")
-        ttk.Label(card, text=f"Fecha actual: {hoy}", style="CardText.TLabel").pack(anchor="w", pady=(8, 4))
-        ttk.Label(card, text="Debes anadir el estado de hoy antes de continuar.", style="CardText.TLabel").pack(anchor="w", pady=(0, 12))
+        ttk.Label(card, text="Hoy no tiene registro", style="Section.TLabel").pack(
+            anchor="w"
+        )
+        ttk.Label(
+            card,
+            text=f"Fecha actual: {hoy}",
+            style="CardText.TLabel",
+        ).pack(anchor="w", pady=(8, 4))
+        ttk.Label(
+            card,
+            text="Debes anadir el estado de hoy antes de continuar.",
+            style="CardText.TLabel",
+        ).pack(anchor="w", pady=(0, 12))
 
         form = ttk.Frame(card, style="Card.TFrame")
         form.pack(anchor="w")
 
-        ttk.Label(form, text="Estado", style="CardText.TLabel").pack(side="left", padx=(0, 10))
+        ttk.Label(form, text="Estado", style="CardText.TLabel").pack(
+            side="left", padx=(0, 10)
+        )
         combo = ttk.Combobox(form, values=ESTADOS, state="readonly", width=28)
         combo.pack(side="left")
         combo.set(ESTADOS[0])
@@ -308,8 +419,18 @@ class TeletrabajoApp:
 
         btns = ttk.Frame(card, style="Card.TFrame")
         btns.pack(anchor="w", pady=(16, 0))
-        ttk.Button(btns, text="Guardar y continuar", command=guardar_hoy, style="Primary.TButton").pack(side="left")
-        ttk.Button(btns, text="5. Salir", command=self.root.destroy, style="Secondary.TButton").pack(side="left", padx=8)
+        ttk.Button(
+            btns,
+            text="Guardar y continuar",
+            command=guardar_hoy,
+            style="Primary.TButton",
+        ).pack(side="left")
+        ttk.Button(
+            btns,
+            text="5. Salir",
+            command=self.root.destroy,
+            style="Secondary.TButton",
+        ).pack(side="left", padx=8)
 
     def render_resumen(self):
         self.clear_view()
@@ -329,40 +450,81 @@ class TeletrabajoApp:
         stats_row = ttk.Frame(self.content, style="App.TFrame")
         stats_row.pack(fill="x", pady=(0, 12))
 
-        self.crear_tarjeta_resumen(stats_row, f"Mes actual ({hoy.strftime('%Y-%m')})", resumen_mes).pack(
+        self.crear_tarjeta_periodo(
+            stats_row,
+            f"Mes actual ({hoy.strftime('%Y-%m')})",
+            resumen_mes,
+        ).pack(side="left", fill="both", expand=True, padx=(0, 6))
+
+        self.crear_tarjeta_periodo(
+            stats_row,
+            f"Trimestre actual (T{trimestre} {hoy.year})",
+            resumen_trim,
+        ).pack(side="left", fill="both", expand=True, padx=(6, 0))
+
+        second_row = ttk.Frame(self.content, style="App.TFrame")
+        second_row.pack(fill="both", expand=True, pady=(0, 12))
+
+        self.crear_tarjeta_anual(second_row).pack(
             side="left", fill="both", expand=True, padx=(0, 6)
         )
-        self.crear_tarjeta_resumen(stats_row, f"Trimestre actual (T{trimestre} {hoy.year})", resumen_trim).pack(
+        self.crear_tarjeta_futuros(second_row).pack(
             side="left", fill="both", expand=True, padx=(6, 0)
         )
 
         rec_outer, rec_card = self.crear_card(self.content, padding=16)
         rec_outer.pack(fill="x", pady=(0, 12))
-        ttk.Label(rec_card, text="Recomendacion semanal", style="Section.TLabel").pack(anchor="w")
-        ttk.Label(rec_card, text=self.calcular_recomendacion_semanal(), style="CardText.TLabel").pack(anchor="w", pady=(10, 0))
+        ttk.Label(
+            rec_card,
+            text="Recomendacion semanal",
+            style="Section.TLabel",
+        ).pack(anchor="w")
+        ttk.Label(
+            rec_card,
+            text=self.calcular_recomendacion_semanal(),
+            style="CardText.TLabel",
+        ).pack(anchor="w", pady=(10, 0))
 
         menu_outer, menu_card = self.crear_card(self.content, padding=16)
         menu_outer.pack(fill="x")
 
-        ttk.Label(menu_card, text="Menu", style="Section.TLabel").grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 12))
-        ttk.Button(menu_card, text="1. Anadir dato", command=self.render_anadir, style="Primary.TButton").grid(row=1, column=0, padx=6, pady=6, sticky="ew")
-        ttk.Button(menu_card, text="2. Modificar dato", command=self.render_modificar, style="Primary.TButton").grid(row=1, column=1, padx=6, pady=6, sticky="ew")
-        ttk.Button(menu_card, text="3. Ver calendario", command=self.render_calendario, style="Primary.TButton").grid(row=1, column=2, padx=6, pady=6, sticky="ew")
-        ttk.Button(menu_card, text="5. Salir", command=self.root.destroy, style="Secondary.TButton").grid(row=1, column=3, padx=6, pady=6, sticky="ew")
+        ttk.Label(menu_card, text="Menu", style="Section.TLabel").grid(
+            row=0, column=0, columnspan=4, sticky="w", pady=(0, 12)
+        )
+        ttk.Button(
+            menu_card,
+            text="1. Anadir dato",
+            command=self.render_anadir,
+            style="Primary.TButton",
+        ).grid(row=1, column=0, padx=6, pady=6, sticky="ew")
+        ttk.Button(
+            menu_card,
+            text="2. Modificar dato",
+            command=self.render_modificar,
+            style="Primary.TButton",
+        ).grid(row=1, column=1, padx=6, pady=6, sticky="ew")
+        ttk.Button(
+            menu_card,
+            text="3. Ver calendario",
+            command=self.render_calendario,
+            style="Primary.TButton",
+        ).grid(row=1, column=2, padx=6, pady=6, sticky="ew")
+        ttk.Button(
+            menu_card,
+            text="5. Salir",
+            command=self.root.destroy,
+            style="Secondary.TButton",
+        ).grid(row=1, column=3, padx=6, pady=6, sticky="ew")
 
         for i in range(4):
             menu_card.columnconfigure(i, weight=1)
 
-    def crear_tarjeta_resumen(self, parent, titulo, resumen):
+    def crear_tarjeta_periodo(self, parent, titulo, resumen):
         outer, card = self.crear_card(parent, padding=16)
 
-        ttk.Label(card, text=titulo, style="Section.TLabel").pack(anchor="w", pady=(0, 8))
-
-        vacaciones_disfrutadas = resumen["vacaciones"]
-        vacaciones_pendientes = max(0, VACACIONES_TOTALES - vacaciones_disfrutadas)
-
-        asuntos_disfrutados = resumen["asuntos_propios"]
-        asuntos_pendientes = max(0, ASUNTOS_PROPIOS_TOTALES - asuntos_disfrutados)
+        ttk.Label(card, text=titulo, style="Section.TLabel").pack(
+            anchor="w", pady=(0, 8)
+        )
 
         gridf = ttk.Frame(card, style="Card.TFrame")
         gridf.pack(fill="x")
@@ -370,17 +532,17 @@ class TeletrabajoApp:
         filas = [
             ("Teletrabajo", resumen["teletrabajo"]),
             ("Oficina", resumen["oficina"]),
-            ("Vacaciones disfrutadas", vacaciones_disfrutadas),
-            ("Vacaciones pendientes", vacaciones_pendientes),
-            ("Asuntos propios disfrutados", asuntos_disfrutados),
-            ("Asuntos propios pendientes", asuntos_pendientes),
             ("Festivo", resumen["festivo"]),
             ("Fin de semana", resumen["fin_de_semana"]),
         ]
 
         for i, (label, value) in enumerate(filas):
-            ttk.Label(gridf, text=label, style="CardText.TLabel").grid(row=i, column=0, sticky="w", pady=2)
-            ttk.Label(gridf, text=str(value), style="CardText.TLabel").grid(row=i, column=1, sticky="e", padx=(18, 0), pady=2)
+            ttk.Label(gridf, text=label, style="CardText.TLabel").grid(
+                row=i, column=0, sticky="w", pady=2
+            )
+            ttk.Label(gridf, text=str(value), style="CardText.TLabel").grid(
+                row=i, column=1, sticky="e", padx=(18, 0), pady=2
+            )
 
         total = resumen["total_calculo"]
         ttk.Separator(card, orient="horizontal").pack(fill="x", pady=12)
@@ -388,12 +550,141 @@ class TeletrabajoApp:
         if total > 0:
             pct_tt = (resumen["teletrabajo"] / total) * 100
             pct_of = (resumen["oficina"] / total) * 100
-            ttk.Label(card, text=f"% teletrabajo: {pct_tt:.2f}", style="Section.TLabel").pack(anchor="w")
-            ttk.Label(card, text=f"% oficina: {pct_of:.2f}", style="CardText.TLabel").pack(anchor="w", pady=(4, 0))
-        else:
-            ttk.Label(card, text="Sin dias validos para calculo", style="Section.TLabel").pack(anchor="w")
+            color_pct = self.get_color_por_desviacion(pct_tt)
 
-        ttk.Label(card, text="Solo cuentan teletrabajo y oficina", style="Muted.TLabel").pack(anchor="w", pady=(10, 0))
+            tk.Label(
+                card,
+                text=f"% teletrabajo: {pct_tt:.2f}",
+                bg=COLOR_CARD,
+                fg=color_pct,
+                font=("Segoe UI", 12, "bold"),
+            ).pack(anchor="w")
+
+            ttk.Label(
+                card,
+                text=f"% oficina: {pct_of:.2f}",
+                style="CardText.TLabel",
+            ).pack(anchor="w", pady=(4, 0))
+
+            ttk.Label(
+                card,
+                text="Referencia objetivo: 60% TT / 40% OF",
+                style="Muted.TLabel",
+            ).pack(anchor="w", pady=(8, 0))
+        else:
+            ttk.Label(
+                card,
+                text="Sin dias validos para calculo",
+                style="Section.TLabel",
+            ).pack(anchor="w")
+
+        ttk.Label(
+            card,
+            text="Verde: +-2% | Amarillo: +-5% | Rojo: >5%",
+            style="Muted.TLabel",
+        ).pack(anchor="w", pady=(10, 0))
+        ttk.Label(
+            card,
+            text="Solo cuentan teletrabajo y oficina",
+            style="Muted.TLabel",
+        ).pack(anchor="w", pady=(4, 0))
+        return outer
+
+    def crear_tarjeta_anual(self, parent):
+        outer, card = self.crear_card(parent, padding=16)
+        resumen_anual = self.get_resumen_anual_disfrute()
+
+        ttk.Label(
+            card,
+            text=f"Saldo anual ({resumen_anual['anio']})",
+            style="Section.TLabel",
+        ).pack(anchor="w", pady=(0, 8))
+
+        gridf = ttk.Frame(card, style="Card.TFrame")
+        gridf.pack(fill="x")
+
+        filas = [
+            ("Vacaciones disfrutadas", resumen_anual["vacaciones_disfrutadas"]),
+            ("Vacaciones pendientes", resumen_anual["vacaciones_pendientes"]),
+            ("Asuntos propios disfrutados", resumen_anual["asuntos_disfrutados"]),
+            ("Asuntos propios pendientes", resumen_anual["asuntos_pendientes"]),
+        ]
+
+        for i, (label, value) in enumerate(filas):
+            ttk.Label(gridf, text=label, style="CardText.TLabel").grid(
+                row=i, column=0, sticky="w", pady=4
+            )
+            ttk.Label(gridf, text=str(value), style="CardText.TLabel").grid(
+                row=i, column=1, sticky="e", padx=(18, 0), pady=4
+            )
+
+        ttk.Separator(card, orient="horizontal").pack(fill="x", pady=12)
+        ttk.Label(
+            card,
+            text=f"Vacaciones totales anuales: {VACACIONES_TOTALES}",
+            style="Muted.TLabel",
+        ).pack(anchor="w")
+        ttk.Label(
+            card,
+            text=f"Asuntos propios totales anuales: {ASUNTOS_PROPIOS_TOTALES}",
+            style="Muted.TLabel",
+        ).pack(anchor="w", pady=(4, 0))
+        return outer
+
+    def crear_tarjeta_futuros(self, parent):
+        outer, card = self.crear_card(parent, padding=16)
+
+        ttk.Label(
+            card,
+            text="Dias futuros solicitados",
+            style="Section.TLabel",
+        ).pack(anchor="w", pady=(0, 8))
+
+        futuros = self.get_dias_futuros_solicitados()
+
+        cols = ("fecha", "dia_semana", "tipo")
+        tree = ttk.Treeview(
+            card,
+            columns=cols,
+            show="headings",
+            height=8,
+            style="Future.Treeview",
+        )
+        tree.heading("fecha", text="Fecha")
+        tree.heading("dia_semana", text="Dia")
+        tree.heading("tipo", text="Tipo")
+
+        tree.column("fecha", width=110, anchor="center")
+        tree.column("dia_semana", width=110, anchor="center")
+        tree.column("tipo", width=170, anchor="center")
+
+        if futuros:
+            dias = [
+                "Lunes",
+                "Martes",
+                "Miercoles",
+                "Jueves",
+                "Viernes",
+                "Sabado",
+                "Domingo",
+            ]
+            for fecha_obj, estado in futuros:
+                dia_semana = dias[fecha_obj.weekday()]
+                tree.insert(
+                    "",
+                    "end",
+                    values=(fecha_obj.strftime("%Y-%m-%d"), dia_semana, estado),
+                )
+        else:
+            tree.insert("", "end", values=("-", "-", "No hay dias futuros solicitados"))
+
+        tree.pack(fill="both", expand=True)
+
+        ttk.Label(
+            card,
+            text="Se muestran las fechas futuras ya registradas en el CSV",
+            style="Muted.TLabel",
+        ).pack(anchor="w", pady=(10, 0))
         return outer
 
     def render_anadir(self):
@@ -403,14 +694,23 @@ class TeletrabajoApp:
         outer, card = self.crear_card(self.content, padding=18)
         outer.pack(fill="x", pady=10)
 
-        ttk.Label(card, text="Nuevo registro", style="Section.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        ttk.Label(card, text="Nuevo registro", style="Section.TLabel").grid(
+            row=0, column=0, columnspan=2, sticky="w", pady=(0, 12)
+        )
 
-        ttk.Label(card, text="Fecha (YYYY-MM-DD)", style="CardText.TLabel").grid(row=1, column=0, sticky="w", pady=6)
+        ttk.Label(
+            card,
+            text="Fecha (YYYY-MM-DD)",
+            style="CardText.TLabel",
+        ).grid(row=1, column=0, sticky="w", pady=6)
         fecha_var = tk.StringVar(value=datetime.today().strftime("%Y-%m-%d"))
-        fecha_entry = ttk.Entry(card, textvariable=fecha_var, width=18)
-        fecha_entry.grid(row=1, column=1, sticky="w", pady=6)
+        ttk.Entry(card, textvariable=fecha_var, width=18).grid(
+            row=1, column=1, sticky="w", pady=6
+        )
 
-        ttk.Label(card, text="Estado", style="CardText.TLabel").grid(row=2, column=0, sticky="w", pady=6)
+        ttk.Label(card, text="Estado", style="CardText.TLabel").grid(
+            row=2, column=0, sticky="w", pady=6
+        )
         estado_combo = ttk.Combobox(card, values=ESTADOS, state="readonly", width=28)
         estado_combo.grid(row=2, column=1, sticky="w", pady=6)
         estado_combo.set(ESTADOS[0])
@@ -430,9 +730,24 @@ class TeletrabajoApp:
 
         btns = ttk.Frame(card, style="Card.TFrame")
         btns.grid(row=3, column=0, columnspan=2, sticky="w", pady=(14, 0))
-        ttk.Button(btns, text="Guardar", command=guardar_nuevo, style="Primary.TButton").pack(side="left")
-        ttk.Button(btns, text="0. Volver", command=self.render_resumen, style="Secondary.TButton").pack(side="left", padx=8)
-        ttk.Button(btns, text="5. Salir", command=self.root.destroy, style="Secondary.TButton").pack(side="left")
+        ttk.Button(
+            btns,
+            text="Guardar",
+            command=guardar_nuevo,
+            style="Primary.TButton",
+        ).pack(side="left")
+        ttk.Button(
+            btns,
+            text="0. Volver",
+            command=self.render_resumen,
+            style="Secondary.TButton",
+        ).pack(side="left", padx=8)
+        ttk.Button(
+            btns,
+            text="5. Salir",
+            command=self.root.destroy,
+            style="Secondary.TButton",
+        ).pack(side="left")
 
     def render_modificar(self):
         self.clear_view()
@@ -441,20 +756,37 @@ class TeletrabajoApp:
         outer, card = self.crear_card(self.content, padding=18)
         outer.pack(fill="x", pady=10)
 
-        ttk.Label(card, text="Editar registro existente", style="Section.TLabel").grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
+        ttk.Label(
+            card,
+            text="Editar registro existente",
+            style="Section.TLabel",
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 12))
 
         fechas = sorted(self.datos.keys())
         if not fechas:
-            ttk.Label(card, text="No hay datos para modificar", style="CardText.TLabel").pack(anchor="w", pady=8)
-            ttk.Button(card, text="0. Volver", command=self.render_resumen, style="Secondary.TButton").pack(anchor="w", pady=8)
+            ttk.Label(
+                card,
+                text="No hay datos para modificar",
+                style="CardText.TLabel",
+            ).pack(anchor="w", pady=8)
+            ttk.Button(
+                card,
+                text="0. Volver",
+                command=self.render_resumen,
+                style="Secondary.TButton",
+            ).pack(anchor="w", pady=8)
             return
 
-        ttk.Label(card, text="Fecha", style="CardText.TLabel").grid(row=1, column=0, sticky="w", pady=6)
+        ttk.Label(card, text="Fecha", style="CardText.TLabel").grid(
+            row=1, column=0, sticky="w", pady=6
+        )
         fecha_combo = ttk.Combobox(card, values=fechas, state="readonly", width=18)
         fecha_combo.grid(row=1, column=1, sticky="w", pady=6)
         fecha_combo.set(fechas[-1])
 
-        ttk.Label(card, text="Estado", style="CardText.TLabel").grid(row=2, column=0, sticky="w", pady=6)
+        ttk.Label(card, text="Estado", style="CardText.TLabel").grid(
+            row=2, column=0, sticky="w", pady=6
+        )
         estado_combo = ttk.Combobox(card, values=ESTADOS, state="readonly", width=28)
         estado_combo.grid(row=2, column=1, sticky="w", pady=6)
         estado_combo.set(self.datos[fecha_combo.get()])
@@ -478,20 +810,53 @@ class TeletrabajoApp:
 
         btns = ttk.Frame(card, style="Card.TFrame")
         btns.grid(row=3, column=0, columnspan=2, sticky="w", pady=(14, 0))
-        ttk.Button(btns, text="Guardar cambios", command=guardar_cambio, style="Primary.TButton").pack(side="left")
-        ttk.Button(btns, text="0. Volver", command=self.render_resumen, style="Secondary.TButton").pack(side="left", padx=8)
-        ttk.Button(btns, text="5. Salir", command=self.root.destroy, style="Secondary.TButton").pack(side="left")
+        ttk.Button(
+            btns,
+            text="Guardar cambios",
+            command=guardar_cambio,
+            style="Primary.TButton",
+        ).pack(side="left")
+        ttk.Button(
+            btns,
+            text="0. Volver",
+            command=self.render_resumen,
+            style="Secondary.TButton",
+        ).pack(side="left", padx=8)
+        ttk.Button(
+            btns,
+            text="5. Salir",
+            command=self.root.destroy,
+            style="Secondary.TButton",
+        ).pack(side="left")
 
     def render_calendario(self):
         self.clear_view()
         self.calendar_active = True
-        self.render_topbar("Calendario", "Usa flecha izquierda y derecha para cambiar de mes. Pulsa 5 para salir")
+        self.render_topbar(
+            "Calendario",
+            "Usa flecha izquierda y derecha para cambiar de mes. Pulsa 5 para salir",
+        )
 
         controls_outer, controls = self.crear_card(self.content, padding=12)
         controls_outer.pack(fill="x", pady=(0, 10))
-        ttk.Button(controls, text="â Mes anterior", command=self.mes_anterior, style="Primary.TButton").pack(side="left")
-        ttk.Button(controls, text="Mes siguiente â", command=self.mes_siguiente, style="Primary.TButton").pack(side="left", padx=8)
-        ttk.Button(controls, text="0. Volver", command=self.render_resumen, style="Secondary.TButton").pack(side="right")
+        ttk.Button(
+            controls,
+            text="← Mes anterior",
+            command=self.mes_anterior,
+            style="Primary.TButton",
+        ).pack(side="left")
+        ttk.Button(
+            controls,
+            text="Mes siguiente →",
+            command=self.mes_siguiente,
+            style="Primary.TButton",
+        ).pack(side="left", padx=8)
+        ttk.Button(
+            controls,
+            text="0. Volver",
+            command=self.render_resumen,
+            style="Secondary.TButton",
+        ).pack(side="right")
 
         self.title_label = ttk.Label(self.content, text="", style="Title.TLabel")
         self.title_label.pack(anchor="center", pady=(0, 10))
@@ -509,9 +874,25 @@ class TeletrabajoApp:
         ]
 
         for i, (ab, label, bg, fg) in enumerate(items):
-            pill = tk.Label(legend, text=ab, bg=bg, fg=fg, font=("Segoe UI", 10, "bold"), padx=10, pady=4, relief="solid", bd=1)
+            pill = tk.Label(
+                legend,
+                text=ab,
+                bg=bg,
+                fg=fg,
+                font=("Segoe UI", 10, "bold"),
+                padx=10,
+                pady=4,
+                relief="solid",
+                bd=1,
+            )
             pill.grid(row=0, column=i * 2, padx=(0, 6), pady=2)
-            txt = tk.Label(legend, text=label, bg=COLOR_CARD, fg=COLOR_TEXT, font=("Segoe UI", 10))
+            txt = tk.Label(
+                legend,
+                text=label,
+                bg=COLOR_CARD,
+                fg=COLOR_TEXT,
+                font=("Segoe UI", 10),
+            )
             txt.grid(row=0, column=i * 2 + 1, padx=(0, 14), pady=2, sticky="w")
 
         cal_outer, cal_card = self.crear_card(self.content, padding=10)
@@ -544,9 +925,19 @@ class TeletrabajoApp:
         for widget in self.calendar_table.winfo_children():
             widget.destroy()
 
-        self.title_label.config(text=f"{calendar.month_name[self.current_month]} {self.current_year}")
+        self.title_label.config(
+            text=f"{calendar.month_name[self.current_month]} {self.current_year}"
+        )
 
-        headers = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
+        headers = [
+            "Lunes",
+            "Martes",
+            "Miercoles",
+            "Jueves",
+            "Viernes",
+            "Sabado",
+            "Domingo",
+        ]
         for col, head in enumerate(headers):
             lbl = tk.Label(
                 self.calendar_table,
@@ -587,16 +978,33 @@ class TeletrabajoApp:
                 if dia == hoy:
                     border = COLOR_TODAY
 
-                celda = tk.Frame(self.calendar_table, bg=border, bd=0, highlightthickness=0)
+                celda = tk.Frame(
+                    self.calendar_table,
+                    bg=border,
+                    bd=0,
+                    highlightthickness=0,
+                )
                 celda.grid(row=row, column=col, sticky="nsew", padx=1, pady=1)
 
                 inner = tk.Frame(celda, bg=bg)
                 inner.pack(fill="both", expand=True, padx=2, pady=2)
 
-                top = tk.Label(inner, text=f"{dia.day:02d}", bg=bg, fg=fg, font=("Segoe UI", 11, "bold"))
+                top = tk.Label(
+                    inner,
+                    text=f"{dia.day:02d}",
+                    bg=bg,
+                    fg=fg,
+                    font=("Segoe UI", 11, "bold"),
+                )
                 top.pack(pady=(10, 2))
 
-                mid = tk.Label(inner, text=texto_estado, bg=bg, fg=fg, font=("Consolas", 12, "bold"))
+                mid = tk.Label(
+                    inner,
+                    text=texto_estado,
+                    bg=bg,
+                    fg=fg,
+                    font=("Consolas", 12, "bold"),
+                )
                 mid.pack()
 
                 if dia.month != self.current_month:
