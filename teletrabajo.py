@@ -2,6 +2,15 @@ import csv
 import os
 from datetime import datetime, timedelta
 
+import os
+
+BASE_DIR = os.path.join(os.path.expanduser("~"), "TeletrabajoApp")
+os.makedirs(BASE_DIR, exist_ok=True)
+
+FILE = os.path.join(BASE_DIR, "teletrabajo_registro.csv")
+
+
+
 FILE = "teletrabajo_registro.csv"
 ESTADOS = ["oficina", "teletrabajo", "festivo", "vacaciones"]
 
