@@ -27,9 +27,8 @@ import os
 import csv
 import threading
 import queue
-import traceback
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 import xml.etree.ElementTree as ET
@@ -257,29 +256,6 @@ def health_score(r: Result, prev_queue: int) -> int:
         score = min(score, 20)
     return max(0, min(100, score))
 
-
-
-def queue_point_value(point) -> int:
-    """Devuelve el valor numérico de un punto de histórico.
-    Acepta enteros, floats, tuplas/listas (fecha, valor) o cadenas numéricas.
-    """
-    try:
-        if isinstance(point, (tuple, list)):
-            if len(point) >= 2:
-                return int(point[1])
-            if len(point) == 1:
-                return int(point[0])
-            return 0
-        return int(point)
-    except (TypeError, ValueError):
-        return 0
-
-
-def safe_int(value, default: int = 0) -> int:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return default
 def diagnose_node(r: Result, prev_queue: int) -> str:
     growth = r.encolados - prev_queue
     if r.error:
@@ -490,14 +466,14 @@ class MonitorGUI(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("1500x980")
-        self.minsize(1280, 820)
+        self.geometry("1500x900")
+        self.minsize(1200, 700)
 
         self.auth = self.load_credentials()
 
         self.previous_data: Dict[str, Dict[str, int]] = {}
         self.current_data: Dict[str, Dict[str, Result]] = {}
-        self.queue_history: Dict[str, Dict[str, List[Tuple[datetime, int]]]] = {}
+        self.queue_history: Dict[str, Dict[str, List[int]]] = {}
         self.node_peaks: Dict[str, Dict[str, Dict[str, object]]] = {}
         self.total_peaks: Dict[str, Dict[str, object]] = {}
 
@@ -509,13 +485,11 @@ class MonitorGUI(tk.Tk):
         self.next_refresh_job = None
         self.countdown_job = None
         self.seconds_remaining = 0
-        self.next_refresh_at: Optional[datetime] = None
 
         self._build_style()
         self._build_ui()
         self.after(200, self.process_ui_queue)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
-        self.after(400, self.start_monitor)
 
     # ---------------- UI ----------------
     def _build_style(self) -> None:
@@ -579,11 +553,11 @@ class MonitorGUI(tk.Tk):
         self._build_incidents_tab()
         self._build_peaks_tab()
 
-    def _new_tree(self, parent, columns, stretch_last=True, height=20):
+    def _new_tree(self, parent, columns, stretch_last=True):
         frame = ttk.Frame(parent)
         frame.pack(fill="both", expand=True)
 
-        tree = ttk.Treeview(frame, columns=columns, show="headings", height=height)
+        tree = ttk.Treeview(frame, columns=columns, show="headings")
         ysb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
         xsb = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=ysb.set, xscrollcommand=xsb.set)
@@ -615,60 +589,19 @@ class MonitorGUI(tk.Tk):
         top = ttk.Label(self.tab_summary, text="Resumen por cluster", style="Header.TLabel")
         top.pack(anchor="w", pady=(0, 6))
         cols = ("Cluster", "Total cola", "Estado", "Variación", "Msg In 1m", "Rec Proc 1m", "Active", "Bounce", "Tendencia")
-        self.summary_tree = self._new_tree(self.tab_summary, cols, height=20)
-
-    def _build_filter_row(self, parent, label_text: str, var: tk.StringVar, callback, values: Optional[List[str]] = None, width: int = 14):
-        row = ttk.Frame(parent)
-        row.pack(fill="x", pady=(0, 6))
-        ttk.Label(row, text=label_text).pack(side="left", padx=(0, 6))
-        combo = ttk.Combobox(row, textvariable=var, values=values or cluster_order(), state="readonly", width=width)
-        combo.pack(side="left")
-        combo.bind("<<ComboboxSelected>>", lambda e: callback())
-        return combo
-
-    def _cluster_matches(self, selected_cluster: str, cluster: str) -> bool:
-        return selected_cluster in ("Todos", cluster)
+        self.summary_tree = self._new_tree(self.tab_summary, cols)
 
     def _build_nodes_tab(self) -> None:
-        ttk.Label(self.tab_nodes, text="Estado detallado por nodo", style="Header.TLabel").pack(anchor="w", pady=(0, 6))
-        filters = ttk.Frame(self.tab_nodes)
-        filters.pack(fill="x", pady=(0, 6))
-
-        ttk.Label(filters, text="Cluster:").pack(side="left", padx=(0, 6))
-        self.nodes_cluster_var = tk.StringVar(value="Europa")
-        self.nodes_cluster_combo = ttk.Combobox(filters, textvariable=self.nodes_cluster_var, values=cluster_order(), state="readonly", width=14)
-        self.nodes_cluster_combo.pack(side="left")
-        self.nodes_cluster_combo.bind("<<ComboboxSelected>>", lambda e: self.on_nodes_filter_change())
-
-        ttk.Label(filters, text="Nodo:").pack(side="left", padx=(16, 6))
-        self.nodes_node_var = tk.StringVar(value="Todos")
-        self.nodes_node_combo = ttk.Combobox(filters, textvariable=self.nodes_node_var, values=["Todos"], state="readonly", width=18)
-        self.nodes_node_combo.pack(side="left")
-        self.nodes_node_combo.bind("<<ComboboxSelected>>", lambda e: (self.refresh_nodes_tab(), self.refresh_nodes_chart()))
-
-        ttk.Label(filters, text="Ventana:").pack(side="left", padx=(16, 6))
-        self.graph_hours_var = tk.StringVar(value="24")
-        for hours in ("1", "3", "6", "12", "24"):
-            ttk.Radiobutton(filters, text=f"{hours}h", value=hours, variable=self.graph_hours_var, command=self.refresh_nodes_chart).pack(side="left", padx=2)
-
+        top = ttk.Label(self.tab_nodes, text="Estado detallado por nodo", style="Header.TLabel")
+        top.pack(anchor="w", pady=(0, 6))
         cols = ("Cluster", "Nodo", "Status", "Encolados", "Anterior", "Var", "CPU", "RAM", "Conn In", "Conn Out", "Active Recips", "Error")
-        table_box = ttk.Frame(self.tab_nodes)
-        table_box.pack(fill="both", expand=True)
-        self.nodes_tree = self._new_tree(table_box, cols, height=20)
-        self.nodes_tree.bind("<<TreeviewSelect>>", self.on_node_row_selected)
-
-        chart_frame = ttk.Labelframe(self.tab_nodes, text="Gráfica de encolados")
-        chart_frame.pack(fill="both", expand=False, pady=(10, 0))
-        self.nodes_chart_canvas = tk.Canvas(chart_frame, height=280, bg="white", highlightthickness=1, highlightbackground="#d0d0d0")
-        self.nodes_chart_canvas.pack(fill="both", expand=True)
-        self.nodes_chart_canvas.bind("<Configure>", lambda e: self.refresh_nodes_chart())
+        self.nodes_tree = self._new_tree(self.tab_nodes, cols)
 
     def _build_health_tab(self) -> None:
-        ttk.Label(self.tab_health, text="Salud operativa y diagnóstico", style="Header.TLabel").pack(anchor="w", pady=(0, 6))
-        self.health_cluster_var = tk.StringVar(value="Europa")
-        self._build_filter_row(self.tab_health, "Cluster:", self.health_cluster_var, self.refresh_health_tab)
+        top = ttk.Label(self.tab_health, text="Salud operativa y diagnóstico", style="Header.TLabel")
+        top.pack(anchor="w", pady=(0, 6))
         cols = ("Cluster", "Nodo", "Health", "Diagnóstico", "Status", "CPU", "RAM", "Conn Out", "Active Recips")
-        self.health_tree = self._new_tree(self.tab_health, cols, height=20)
+        self.health_tree = self._new_tree(self.tab_health, cols)
 
     def _build_incidents_tab(self) -> None:
         split = ttk.Panedwindow(self.tab_incidents, orient="vertical")
@@ -679,23 +612,20 @@ class MonitorGUI(tk.Tk):
         split.add(topf, weight=1)
         split.add(botf, weight=1)
 
-        self.incidents_tree = self._new_tree(topf, ("Cluster", "Nodo", "Tipo", "Detalle"), height=20)
-        self.findings_tree = self._new_tree(botf, ("Cluster", "Nodo", "Hallazgo"), height=20)
+        self.incidents_tree = self._new_tree(topf, ("Cluster", "Nodo", "Tipo", "Detalle"))
+        self.findings_tree = self._new_tree(botf, ("Cluster", "Nodo", "Hallazgo"))
 
     def _build_peaks_tab(self) -> None:
-        self.peaks_cluster_var = tk.StringVar(value="Europa")
-        self._build_filter_row(self.tab_peaks, "Cluster (solo picos por nodo):", self.peaks_cluster_var, self.refresh_peaks_tab)
         split = ttk.Panedwindow(self.tab_peaks, orient="vertical")
         split.pack(fill="both", expand=True)
 
         topf = ttk.Labelframe(split, text="Picos por nodo")
         botf = ttk.Labelframe(split, text="Picos totales por cluster")
-        split.add(topf, weight=5)
+        split.add(topf, weight=3)
         split.add(botf, weight=1)
 
-        self.node_peaks_tree = self._new_tree(topf, ("Cluster", "Nodo", "Hora pico", "Encolados pico"), height=20)
-        self.node_peaks_tree["displaycolumns"] = ("Cluster", "Nodo", "Hora pico", "Encolados pico")
-        self.total_peaks_tree = self._new_tree(botf, ("Cluster", "Hora pico", "Total pico"), height=20)
+        self.node_peaks_tree = self._new_tree(topf, ("Cluster", "Nodo", "Hora pico", "Encolados pico"))
+        self.total_peaks_tree = self._new_tree(botf, ("Cluster", "Hora pico", "Total pico"))
 
     # ---------------- Monitor lifecycle ----------------
     def load_credentials(self) -> Tuple[str, str]:
@@ -719,9 +649,6 @@ class MonitorGUI(tk.Tk):
         if self.is_fetching:
             return
         self.stop_flag.clear()
-        self.load_recent_history_from_csv(24)
-        self.update_nodes_node_combo()
-        self.refresh_nodes_chart()
         self.status_var.set("Estado: iniciando...")
         self.fetch_cycle(manual=True)
 
@@ -730,7 +657,6 @@ class MonitorGUI(tk.Tk):
         self.is_fetching = False
         self.cancel_timers()
         self.status_var.set("Estado: detenido")
-        self.next_refresh_at = None
         self.countdown_var.set("Próxima actualización: --")
 
     def manual_refresh(self) -> None:
@@ -781,9 +707,8 @@ class MonitorGUI(tk.Tk):
             for cluster, nodo_map in current_data.items():
                 self.queue_history.setdefault(cluster, {})
                 for nodo, r in nodo_map.items():
-                    self.queue_history[cluster].setdefault(nodo, []).append((now, r.encolados))
-                    cutoff = now - timedelta(hours=24)
-                    self.queue_history[cluster][nodo] = [pt for pt in self.queue_history[cluster][nodo] if pt[0] >= cutoff]
+                    self.queue_history[cluster].setdefault(nodo, []).append(r.encolados)
+                    self.queue_history[cluster][nodo] = self.queue_history[cluster][nodo][-5:]
 
             update_cluster_peaks(current_data, self.node_peaks, self.total_peaks, timestamp)
             incidents_active = has_incidents(current_data)
@@ -806,16 +731,10 @@ class MonitorGUI(tk.Tk):
             while True:
                 msg_type, payload = self.ui_queue.get_nowait()
                 if msg_type == "update":
-                    try:
-                        self._apply_update(payload)
-                    except Exception as e:
-                        self.is_fetching = False
-                        self.status_var.set("Estado: error en interfaz")
-                        messagebox.showerror("Error de interfaz", f"{e}\n\n{traceback.format_exc()}")
+                    self._apply_update(payload)
                 elif msg_type == "error":
                     self.is_fetching = False
                     self.status_var.set("Estado: error")
-                    self.countdown_var.set("Próxima actualización: error")
                     messagebox.showerror("Error", str(payload))
         except queue.Empty:
             pass
@@ -847,20 +766,15 @@ class MonitorGUI(tk.Tk):
         }
 
         if not self.stop_flag.is_set():
-            self.next_refresh_at = datetime.now() + timedelta(seconds=int(refresh_seconds))
             self.seconds_remaining = int(refresh_seconds)
             self.update_countdown()
-            self.next_refresh_job = self.after(int(refresh_seconds * 1000), lambda: self.fetch_cycle(False))
+            self.next_refresh_job = self.after(int(refresh_seconds * 1000), self.fetch_cycle)
 
     def update_countdown(self) -> None:
-        if self.stop_flag.is_set() or not self.next_refresh_at:
-            self.countdown_var.set("Próxima actualización: --")
-            return
-        remaining = max(0, int((self.next_refresh_at - datetime.now()).total_seconds()))
-        self.seconds_remaining = remaining
-        mins, secs = divmod(remaining, 60)
+        mins, secs = divmod(max(0, self.seconds_remaining), 60)
         self.countdown_var.set(f"Próxima actualización: {mins:02d}:{secs:02d}")
-        if remaining > 0:
+        if self.seconds_remaining > 0 and not self.stop_flag.is_set():
+            self.seconds_remaining -= 1
             self.countdown_job = self.after(1000, self.update_countdown)
 
     # ---------------- Refresh tabs ----------------
@@ -872,155 +786,10 @@ class MonitorGUI(tk.Tk):
         return state
 
     def configure_common_tags(self, tree: ttk.Treeview) -> None:
-        tree.tag_configure("ok", background="#c6efce", foreground="#000000")
-        tree.tag_configure("warning", background="#ffeb9c", foreground="#000000")
-        tree.tag_configure("critical", background="#ffc7ce", foreground="#000000")
-        tree.tag_configure("error", background="#ffc7ce", foreground="#000000")
-
-    def severity_tag_from_queue(self, cluster: str, encolados: int, error: Optional[str] = None) -> str:
-        if error:
-            return "critical"
-        if encolados >= CLUSTER_THRESHOLDS[cluster]["critical"]:
-            return "critical"
-        if encolados >= CLUSTER_THRESHOLDS[cluster]["warning"]:
-            return "warning"
-        return "ok"
-
-    def severity_tag_from_health(self, hs: int, error: Optional[str] = None) -> str:
-        if error:
-            return "critical"
-        if hs < 60:
-            return "critical"
-        if hs < 80:
-            return "warning"
-        return "ok"
-
-    def load_recent_history_from_csv(self, hours: int = 24) -> None:
-        cutoff = datetime.now() - timedelta(hours=hours)
-        ensure_csv_dir()
-        self.queue_history = {}
-        for cluster in cluster_order():
-            path = Path(build_cluster_csv_path(cluster, datetime.now()))
-            if not path.exists():
-                continue
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    reader = csv.DictReader(f, delimiter=";")
-                    for row in reader:
-                        try:
-                            ts = datetime.strptime(f"{row['fecha']} {row['hora']}", "%Y-%m-%d %H:%M:%S")
-                        except Exception:
-                            continue
-                        if ts < cutoff:
-                            continue
-                        nodo = row.get("nodo", "").strip()
-                        if not nodo:
-                            continue
-                        val = to_int(row.get("encolados"))
-                        self.queue_history.setdefault(cluster, {}).setdefault(nodo, []).append((ts, val))
-            except Exception:
-                continue
-        for cluster in list(self.queue_history.keys()):
-            for nodo in list(self.queue_history[cluster].keys()):
-                self.queue_history[cluster][nodo].sort(key=lambda x: x[0])
-
-    def on_nodes_filter_change(self) -> None:
-        self.update_nodes_node_combo()
-        self.refresh_nodes_tab()
-        self.refresh_nodes_chart()
-
-    def update_nodes_node_combo(self) -> None:
-        cluster = self.nodes_cluster_var.get() if hasattr(self, 'nodes_cluster_var') else 'Europa'
-        nodos = sorted(self.current_data.get(cluster, {}).keys())
-        if not nodos and cluster in self.queue_history:
-            nodos = sorted(self.queue_history.get(cluster, {}).keys())
-        values = ["Todos"] + nodos
-        self.nodes_node_combo["values"] = values
-        if self.nodes_node_var.get() not in values:
-            self.nodes_node_var.set("Todos")
-
-    def on_node_row_selected(self, event=None) -> None:
-        selected = self.nodes_tree.selection()
-        if not selected:
-            return
-        values = self.nodes_tree.item(selected[0], "values")
-        if len(values) >= 2 and values[1] not in ("", "-"):
-            nodo = values[1]
-            available = list(self.nodes_node_combo.cget("values"))
-            if nodo in available:
-                self.nodes_node_var.set(nodo)
-                self.refresh_nodes_chart()
-
-    def refresh_nodes_chart(self) -> None:
-        if not hasattr(self, 'nodes_chart_canvas'):
-            return
-        canvas = self.nodes_chart_canvas
-        canvas.delete('all')
-        width = max(canvas.winfo_width(), 500)
-        height = max(canvas.winfo_height(), 240)
-        left, right, top, bottom = 60, 20, 25, 38
-        plot_w = max(10, width - left - right)
-        plot_h = max(10, height - top - bottom)
-
-        cluster = self.nodes_cluster_var.get() if hasattr(self, 'nodes_cluster_var') else 'Europa'
-        selected_node = self.nodes_node_var.get() if hasattr(self, 'nodes_node_var') else 'Todos'
-        hours = int(self.graph_hours_var.get()) if hasattr(self, 'graph_hours_var') else 24
-        end_time = datetime.now()
-        start_time = end_time - timedelta(hours=hours)
-
-        series: Dict[str, List[Tuple[datetime, int]]] = {}
-        ymax = 0
-        history = self.queue_history.get(cluster, {})
-        node_names = sorted(history.keys())
-        if selected_node != 'Todos':
-            node_names = [selected_node] if selected_node in history else []
-
-        for nodo in node_names:
-            pts = [(ts, val) for ts, val in history.get(nodo, []) if ts >= start_time]
-            if pts:
-                series[nodo] = pts
-                ymax = max(ymax, max(val for _, val in pts))
-
-        canvas.create_rectangle(left, top, left + plot_w, top + plot_h, outline='#909090')
-        if not series:
-            canvas.create_text(width/2, height/2, text='Sin histórico suficiente para la gráfica', font=('Segoe UI', 11))
-            return
-
-        ymax = max(10, int(ymax * 1.15))
-        for frac in (0.0, 0.25, 0.5, 0.75, 1.0):
-            y = top + plot_h - plot_h * frac
-            value = int(ymax * frac)
-            canvas.create_line(left, y, left + plot_w, y, fill='#e6e6e6')
-            canvas.create_text(left - 8, y, text=str(value), anchor='e', font=('Segoe UI', 8))
-
-        for i in range(hours + 1):
-            frac = i / max(1, hours)
-            x = left + plot_w * frac
-            label_time = start_time + timedelta(hours=i)
-            canvas.create_line(x, top + plot_h, x, top + plot_h + 4, fill='#808080')
-            canvas.create_text(x, top + plot_h + 14, text=label_time.strftime('%H:%M'), anchor='n', font=('Segoe UI', 8))
-
-        palette = ['#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd', '#8c564b', '#e377c2', '#7f7f7f']
-        legend_x, legend_y = left + 12, top + 8
-        for idx, (nodo, pts) in enumerate(series.items()):
-            color = palette[idx % len(palette)]
-            coords: List[float] = []
-            for ts, val in pts:
-                frac_x = min(max((ts - start_time).total_seconds() / max(1, hours * 3600), 0), 1)
-                x = left + plot_w * frac_x
-                y = top + plot_h - (val / ymax) * plot_h
-                coords.extend([x, y])
-                canvas.create_oval(x-2, y-2, x+2, y+2, fill=color, outline=color)
-            if len(coords) >= 4:
-                canvas.create_line(*coords, fill=color, width=2)
-            lx = legend_x + (idx % 4) * 120
-            ly = legend_y + (idx // 4) * 18
-            canvas.create_line(lx, ly, lx + 18, ly, fill=color, width=2)
-            canvas.create_text(lx + 24, ly, text=nodo, anchor='w', font=('Segoe UI', 8))
-
-        canvas.create_text(width/2, 10, text=f'Cluster {cluster} - histórico de encolados ({hours}h)', anchor='n', font=('Segoe UI', 10, 'bold'))
-        canvas.create_text(16, top + plot_h/2, text='Encolados', angle=90, font=('Segoe UI', 9))
-        canvas.create_text(left + plot_w/2, height - 8, text='Tiempo', font=('Segoe UI', 9))
+        tree.tag_configure("ok", background="#e8f5e9")
+        tree.tag_configure("warning", background="#fff8e1")
+        tree.tag_configure("critical", background="#ffebee")
+        tree.tag_configure("error", background="#fce4ec")
 
     def refresh_summary_tab(self) -> None:
         self.clear_tree(self.summary_tree)
@@ -1068,19 +837,19 @@ class MonitorGUI(tk.Tk):
         self.clear_tree(self.nodes_tree)
         self.configure_common_tags(self.nodes_tree)
 
-        selected_cluster = self.nodes_cluster_var.get() if hasattr(self, "nodes_cluster_var") else "Europa"
         for cluster in cluster_order():
-            if cluster != selected_cluster:
-                continue
             for nodo in sorted(self.current_data.get(cluster, {}).keys()):
                 r = self.current_data[cluster][nodo]
-                if self.nodes_node_var.get() not in ("", "Todos") and nodo != self.nodes_node_var.get():
-                    continue
-
                 prev = get_prev_queue(self.previous_data, cluster, nodo)
                 diff = r.encolados - prev
 
-                tag = self.severity_tag_from_queue(cluster, r.encolados, r.error)
+                tag = "ok"
+                if r.error:
+                    tag = "error"
+                elif r.encolados >= CLUSTER_THRESHOLDS[cluster]["critical"]:
+                    tag = "critical"
+                elif r.encolados >= CLUSTER_THRESHOLDS[cluster]["warning"]:
+                    tag = "warning"
 
                 self.nodes_tree.insert(
                     "", "end",
@@ -1097,17 +866,20 @@ class MonitorGUI(tk.Tk):
         self.clear_tree(self.health_tree)
         self.configure_common_tags(self.health_tree)
 
-        selected_cluster = self.health_cluster_var.get() if hasattr(self, "health_cluster_var") else "Europa"
         for cluster in cluster_order():
-            if cluster != selected_cluster:
-                continue
             for nodo in sorted(self.current_data.get(cluster, {}).keys()):
                 r = self.current_data[cluster][nodo]
                 prev = get_prev_queue(self.previous_data, cluster, nodo)
                 hs = health_score(r, prev)
                 diag = diagnose_node(r, prev)
 
-                tag = self.severity_tag_from_health(hs, r.error)
+                tag = "ok"
+                if r.error:
+                    tag = "error"
+                elif hs < 60:
+                    tag = "critical"
+                elif hs < 80:
+                    tag = "warning"
 
                 self.health_tree.insert(
                     "", "end",
@@ -1168,11 +940,9 @@ class MonitorGUI(tk.Tk):
 
                 if len(hist) >= ADV_THRESHOLDS["stuck_cycles"]:
                     last = hist[-ADV_THRESHOLDS["stuck_cycles"]:]
-                    last_values = [queue_point_value(v) for v in last]
-                    conn_out = safe_int(r.conn_out)
-                    if all(v >= ADV_THRESHOLDS["stuck_min_queue"] for v in last_values) and conn_out <= ADV_THRESHOLDS["smtp_low_conn_out"]:
+                    if all(v >= ADV_THRESHOLDS["stuck_min_queue"] for v in last) and r.conn_out <= ADV_THRESHOLDS["smtp_low_conn_out"]:
                         findings_added = True
-                        self.findings_tree.insert("", "end", values=(cluster, r.nodo, f"Cola atascada ({fmt_num_dot(r.encolados)} en cola, salida {conn_out})"), tags=("critical",))
+                        self.findings_tree.insert("", "end", values=(cluster, r.nodo, f"Cola atascada ({fmt_num_dot(r.encolados)} en cola, salida {r.conn_out})"), tags=("critical",))
 
                 if growth >= ADV_THRESHOLDS["growth_critical"]:
                     findings_added = True
@@ -1193,21 +963,23 @@ class MonitorGUI(tk.Tk):
         self.configure_common_tags(self.node_peaks_tree)
         self.configure_common_tags(self.total_peaks_tree)
 
-        selected_cluster = self.peaks_cluster_var.get() if hasattr(self, 'peaks_cluster_var') else 'Europa'
-        ranking = []
-        for nodo, info in self.node_peaks.get(selected_cluster, {}).items():
-            ranking.append((nodo, str(info["hora"]), int(info["encolados"])))
-        ranking.sort(key=lambda x: x[0])
-        ranking = ranking[:20]
-
-        if not ranking:
-            self.node_peaks_tree.insert("", "end", values=(selected_cluster, "-", "--:--", "0"), tags=("ok",))
-        else:
-            for nodo, hora, enc in ranking:
-                tag = self.severity_tag_from_queue(selected_cluster, enc)
-                self.node_peaks_tree.insert("", "end", values=(selected_cluster, nodo, hora, fmt_num_dot(enc)), tags=(tag,))
-
         for cluster in cluster_order():
+            ranking = []
+            for nodo, info in self.node_peaks.get(cluster, {}).items():
+                ranking.append((nodo, str(info["hora"]), int(info["encolados"])))
+            ranking.sort(key=lambda x: x[2], reverse=True)
+
+            if not ranking:
+                self.node_peaks_tree.insert("", "end", values=(cluster, "-", "--:--", "0"), tags=("ok",))
+            else:
+                for nodo, hora, enc in ranking:
+                    tag = "ok"
+                    if enc >= CLUSTER_THRESHOLDS[cluster]["critical"]:
+                        tag = "critical"
+                    elif enc >= CLUSTER_THRESHOLDS[cluster]["warning"]:
+                        tag = "warning"
+                    self.node_peaks_tree.insert("", "end", values=(cluster, nodo, hora, fmt_num_dot(enc)), tags=(tag,))
+
             total_info = self.total_peaks.get(cluster, {"hora": "--:--", "total": 0})
             total = int(total_info["total"])
             tag = "ok"
