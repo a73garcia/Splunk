@@ -57,6 +57,19 @@ VERIFY_SSL = False
 if not VERIFY_SSL:
     urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+
+CLUSTER_NODE_MAP = {
+    "Europa": ["ESA01", "ESA03", "ESA05", "ESA07", "ESA09", "ESA11", "ESA13", "ESA15", "ESA17", "ESA19",
+               "ESA02", "ESA04", "ESA06", "ESA08", "ESA10", "ESA12", "ESA14", "ESA16", "ESA18", "ESA20"],
+    "America": ["ESA01", "ESA02", "ESA03", "ESA04", "ESA05", "ESA06", "ESA07", "ESA08", "ESA09", "ESA10",
+                "ESA11", "ESA12", "ESA13", "ESA14", "ESA15", "ESA16", "ESA17", "ESA18", "ESA19", "ESA20"],
+    "Brasil": ["ESA01", "ESA02", "ESA03", "ESA04", "ESA05", "ESA06", "ESA07", "ESA08", "ESA09", "ESA10",
+               "ESA11", "ESA12", "ESA13", "ESA14", "ESA15", "ESA16", "ESA17", "ESA18", "ESA19", "ESA20"],
+    "Aplicaciones": ["ESA01", "ESA02", "ESA03", "ESA04", "ESA05", "ESA06", "ESA07", "ESA15", "ESA16", "ESA17",
+                     "ESA08", "ESA09", "ESA10", "ESA11", "ESA12", "ESA13", "ESA14", "ESA18", "ESA19", "ESA20"],
+}
+
+
 GROUPS = [
     {"cluster": "Europa",       "pattern": "https://xxx{idx}yyy", "start": 1, "end": 20},
     {"cluster": "America",      "pattern": "https://xxx{idx}zzz", "start": 1, "end": 20},
@@ -852,6 +865,10 @@ class MonitorGUI(tk.Tk):
             self.after(200, self.process_ui_queue)
 
     def _apply_update(self, payload: Dict[str, object]) -> None:
+        try:
+            self._populate_cluster_totals_tables()
+        except Exception:
+            pass
         self.is_fetching = False
         self.current_data = payload["current_data"]  # type: ignore[assignment]
         timestamp = payload["timestamp"]             # type: ignore[assignment]
@@ -980,6 +997,11 @@ class MonitorGUI(tk.Tk):
             )
 
         self.refresh_nodes_chart()
+
+        try:
+            self._insert_nodes_totals_row()
+        except Exception:
+            pass
 
     def refresh_health_tab(self) -> None:
         self.clear_tree(self.health_tree)
@@ -1323,6 +1345,158 @@ def main() -> None:
     app = MonitorGUI()
     app.mainloop()
 
+
+
+    def _normalize_cluster_name(self, name):
+        if not name:
+            return ""
+        n = str(name).strip().lower()
+        mapping = {
+            "europa": "Europa",
+            "america": "America",
+            "américa": "America",
+            "brasil": "Brasil",
+            "brazil": "Brasil",
+            "aplicaciones": "Aplicaciones",
+        }
+        return mapping.get(n, str(name).strip())
+
+    def _get_cluster_expected_nodes(self, cluster_name):
+        return CLUSTER_NODE_MAP.get(self._normalize_cluster_name(cluster_name), [])
+
+    def _extract_row_node_name(self, row):
+        for attr in ("node", "hostname", "host", "esa", "name"):
+            val = getattr(row, attr, None)
+            if val:
+                return str(val).strip()
+        for key in ("node", "hostname", "host", "esa", "name"):
+            if isinstance(row, dict) and row.get(key):
+                return str(row.get(key)).strip()
+        return ""
+
+    def _extract_row_cluster_name(self, row):
+        for attr in ("cluster", "cluster_name", "region"):
+            val = getattr(row, attr, None)
+            if val:
+                return self._normalize_cluster_name(val)
+        for key in ("cluster", "cluster_name", "region"):
+            if isinstance(row, dict) and row.get(key):
+                return self._normalize_cluster_name(row.get(key))
+        return ""
+
+    def _extract_queue_value(self, row):
+        candidates = ("queue", "queue_size", "queued", "encolados", "messages_in_queue", "active_queue")
+        value = None
+        for attr in candidates:
+            if hasattr(row, attr):
+                value = getattr(row, attr, None)
+                if value is not None:
+                    break
+        if value is None and isinstance(row, dict):
+            for key in candidates:
+                if key in row and row.get(key) is not None:
+                    value = row.get(key)
+                    break
+        try:
+            return int(float(value))
+        except Exception:
+            return 0
+
+    def _collect_current_rows(self):
+        for attr in ("results", "rows", "current_results", "latest_results", "data_rows"):
+            rows = getattr(self, attr, None)
+            if isinstance(rows, list):
+                return rows
+        return []
+
+    def _cluster_summary_rows(self):
+        rows = self._collect_current_rows()
+        out = []
+        for cluster in ("Europa", "America", "Brasil", "Aplicaciones"):
+            expected_nodes = self._get_cluster_expected_nodes(cluster)
+            expected_set = set(expected_nodes)
+            filtered = []
+            if rows:
+                for row in rows:
+                    row_cluster = self._extract_row_cluster_name(row)
+                    row_node = self._extract_row_node_name(row)
+                    if row_cluster == cluster or (row_node and row_node in expected_set):
+                        filtered.append(row)
+            total_queue = sum(self._extract_queue_value(r) for r in filtered)
+            total_nodes = len(expected_nodes) if expected_nodes else len({self._extract_row_node_name(r) for r in filtered if self._extract_row_node_name(r)})
+            out.append((cluster, total_queue, total_nodes))
+        return out
+
+    def _populate_cluster_totals_tables(self):
+        tables = []
+        for attr in ("summary_cluster_queue_tree", "summary_cluster_nodes_tree"):
+            tree = getattr(self, attr, None)
+            if tree is not None:
+                tables.append((attr, tree))
+        if not tables:
+            return
+        rows = self._cluster_summary_rows()
+        for _, tree in tables:
+            for item in tree.get_children():
+                tree.delete(item)
+        queue_tree = getattr(self, "summary_cluster_queue_tree", None)
+        if queue_tree is not None:
+            for cluster, total_queue, total_nodes in rows:
+                queue_tree.insert("", "end", values=(cluster, total_queue, total_nodes))
+        nodes_tree = getattr(self, "summary_cluster_nodes_tree", None)
+        if nodes_tree is not None:
+            grand_queue = sum(r[1] for r in rows)
+            grand_nodes = sum(r[2] for r in rows)
+            for cluster, total_queue, total_nodes in rows:
+                nodes_tree.insert("", "end", values=(cluster, total_nodes, total_queue))
+            nodes_tree.insert("", "end", values=("TOTAL", grand_nodes, grand_queue), tags=("totals",))
+
+    def _insert_nodes_totals_row(self):
+        tree = getattr(self, "nodes_tree", None)
+        if tree is None:
+            return
+        children = tree.get_children()
+        if not children:
+            return
+        try:
+            cols = tree["columns"]
+        except Exception:
+            return
+        ncols = len(cols)
+        values = ["" for _ in range(ncols)]
+        if ncols:
+            values[0] = "TOTAL"
+        cluster = ""
+        if hasattr(self, "cluster_var_nodes"):
+            try:
+                cluster = self.cluster_var_nodes.get()
+            except Exception:
+                cluster = ""
+        expected_nodes = self._get_cluster_expected_nodes(cluster)
+        rows = self._collect_current_rows()
+        expected_set = set(expected_nodes)
+        filtered = []
+        for row in rows:
+            row_cluster = self._extract_row_cluster_name(row)
+            row_node = self._extract_row_node_name(row)
+            if row_cluster == self._normalize_cluster_name(cluster) or (row_node and row_node in expected_set):
+                filtered.append(row)
+        total_queue = sum(self._extract_queue_value(r) for r in filtered)
+        total_nodes = len(expected_nodes) if expected_nodes else len({self._extract_row_node_name(r) for r in filtered if self._extract_row_node_name(r)})
+
+        lowered = [str(c).lower() for c in cols]
+        for idx, col in enumerate(lowered):
+            if any(k in col for k in ("queue", "cola", "encol", "queued")):
+                values[idx] = total_queue
+            elif "cluster" in col:
+                values[idx] = cluster
+            elif "estado" in col or "status" in col:
+                values[idx] = f"{total_nodes} nodos"
+            elif "node" in col or "nodo" in col:
+                values[idx] = "TOTAL"
+            elif "health" in col or "salud" in col:
+                values[idx] = ""
+        tree.insert("", "end", values=tuple(values), tags=("totals",))
 
 if __name__ == "__main__":
     main()
