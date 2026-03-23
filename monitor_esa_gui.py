@@ -490,8 +490,8 @@ class MonitorGUI(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("1500x900")
-        self.minsize(1200, 700)
+        self.geometry("1500x980")
+        self.minsize(1280, 820)
 
         self.auth = self.load_credentials()
 
@@ -690,10 +690,11 @@ class MonitorGUI(tk.Tk):
 
         topf = ttk.Labelframe(split, text="Picos por nodo")
         botf = ttk.Labelframe(split, text="Picos totales por cluster")
-        split.add(topf, weight=3)
+        split.add(topf, weight=5)
         split.add(botf, weight=1)
 
         self.node_peaks_tree = self._new_tree(topf, ("Cluster", "Nodo", "Hora pico", "Encolados pico"), height=20)
+        self.node_peaks_tree["displaycolumns"] = ("Cluster", "Nodo", "Hora pico", "Encolados pico")
         self.total_peaks_tree = self._new_tree(botf, ("Cluster", "Hora pico", "Total pico"), height=20)
 
     # ---------------- Monitor lifecycle ----------------
@@ -871,10 +872,28 @@ class MonitorGUI(tk.Tk):
         return state
 
     def configure_common_tags(self, tree: ttk.Treeview) -> None:
-        tree.tag_configure("ok", background="#e8f5e9")
-        tree.tag_configure("warning", background="#fff8e1")
-        tree.tag_configure("critical", background="#ffebee")
-        tree.tag_configure("error", background="#fce4ec")
+        tree.tag_configure("ok", background="#c6efce", foreground="#000000")
+        tree.tag_configure("warning", background="#ffeb9c", foreground="#000000")
+        tree.tag_configure("critical", background="#ffc7ce", foreground="#000000")
+        tree.tag_configure("error", background="#ffc7ce", foreground="#000000")
+
+    def severity_tag_from_queue(self, cluster: str, encolados: int, error: Optional[str] = None) -> str:
+        if error:
+            return "critical"
+        if encolados >= CLUSTER_THRESHOLDS[cluster]["critical"]:
+            return "critical"
+        if encolados >= CLUSTER_THRESHOLDS[cluster]["warning"]:
+            return "warning"
+        return "ok"
+
+    def severity_tag_from_health(self, hs: int, error: Optional[str] = None) -> str:
+        if error:
+            return "critical"
+        if hs < 60:
+            return "critical"
+        if hs < 80:
+            return "warning"
+        return "ok"
 
     def load_recent_history_from_csv(self, hours: int = 24) -> None:
         cutoff = datetime.now() - timedelta(hours=hours)
@@ -1061,13 +1080,7 @@ class MonitorGUI(tk.Tk):
                 prev = get_prev_queue(self.previous_data, cluster, nodo)
                 diff = r.encolados - prev
 
-                tag = "ok"
-                if r.error:
-                    tag = "error"
-                elif r.encolados >= CLUSTER_THRESHOLDS[cluster]["critical"]:
-                    tag = "critical"
-                elif r.encolados >= CLUSTER_THRESHOLDS[cluster]["warning"]:
-                    tag = "warning"
+                tag = self.severity_tag_from_queue(cluster, r.encolados, r.error)
 
                 self.nodes_tree.insert(
                     "", "end",
@@ -1094,13 +1107,7 @@ class MonitorGUI(tk.Tk):
                 hs = health_score(r, prev)
                 diag = diagnose_node(r, prev)
 
-                tag = "ok"
-                if r.error:
-                    tag = "error"
-                elif hs < 60:
-                    tag = "critical"
-                elif hs < 80:
-                    tag = "warning"
+                tag = self.severity_tag_from_health(hs, r.error)
 
                 self.health_tree.insert(
                     "", "end",
@@ -1191,16 +1198,13 @@ class MonitorGUI(tk.Tk):
         for nodo, info in self.node_peaks.get(selected_cluster, {}).items():
             ranking.append((nodo, str(info["hora"]), int(info["encolados"])))
         ranking.sort(key=lambda x: x[0])
+        ranking = ranking[:20]
 
         if not ranking:
             self.node_peaks_tree.insert("", "end", values=(selected_cluster, "-", "--:--", "0"), tags=("ok",))
         else:
             for nodo, hora, enc in ranking:
-                tag = "ok"
-                if enc >= CLUSTER_THRESHOLDS[selected_cluster]["critical"]:
-                    tag = "critical"
-                elif enc >= CLUSTER_THRESHOLDS[selected_cluster]["warning"]:
-                    tag = "warning"
+                tag = self.severity_tag_from_queue(selected_cluster, enc)
                 self.node_peaks_tree.insert("", "end", values=(selected_cluster, nodo, hora, fmt_num_dot(enc)), tags=(tag,))
 
         for cluster in cluster_order():
