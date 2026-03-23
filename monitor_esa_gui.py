@@ -579,11 +579,11 @@ class MonitorGUI(tk.Tk):
         self._build_incidents_tab()
         self._build_peaks_tab()
 
-    def _new_tree(self, parent, columns, stretch_last=True):
+    def _new_tree(self, parent, columns, stretch_last=True, height=20):
         frame = ttk.Frame(parent)
         frame.pack(fill="both", expand=True)
 
-        tree = ttk.Treeview(frame, columns=columns, show="headings")
+        tree = ttk.Treeview(frame, columns=columns, show="headings", height=height)
         ysb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
         xsb = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=ysb.set, xscrollcommand=xsb.set)
@@ -615,7 +615,7 @@ class MonitorGUI(tk.Tk):
         top = ttk.Label(self.tab_summary, text="Resumen por cluster", style="Header.TLabel")
         top.pack(anchor="w", pady=(0, 6))
         cols = ("Cluster", "Total cola", "Estado", "Variación", "Msg In 1m", "Rec Proc 1m", "Active", "Bounce", "Tendencia")
-        self.summary_tree = self._new_tree(self.tab_summary, cols)
+        self.summary_tree = self._new_tree(self.tab_summary, cols, height=20)
 
     def _build_filter_row(self, parent, label_text: str, var: tk.StringVar, callback, values: Optional[List[str]] = None, width: int = 14):
         row = ttk.Frame(parent)
@@ -654,7 +654,7 @@ class MonitorGUI(tk.Tk):
         cols = ("Cluster", "Nodo", "Status", "Encolados", "Anterior", "Var", "CPU", "RAM", "Conn In", "Conn Out", "Active Recips", "Error")
         table_box = ttk.Frame(self.tab_nodes)
         table_box.pack(fill="both", expand=True)
-        self.nodes_tree = self._new_tree(table_box, cols)
+        self.nodes_tree = self._new_tree(table_box, cols, height=20)
         self.nodes_tree.bind("<<TreeviewSelect>>", self.on_node_row_selected)
 
         chart_frame = ttk.Labelframe(self.tab_nodes, text="Gráfica de encolados")
@@ -668,7 +668,7 @@ class MonitorGUI(tk.Tk):
         self.health_cluster_var = tk.StringVar(value="Europa")
         self._build_filter_row(self.tab_health, "Cluster:", self.health_cluster_var, self.refresh_health_tab)
         cols = ("Cluster", "Nodo", "Health", "Diagnóstico", "Status", "CPU", "RAM", "Conn Out", "Active Recips")
-        self.health_tree = self._new_tree(self.tab_health, cols)
+        self.health_tree = self._new_tree(self.tab_health, cols, height=20)
 
     def _build_incidents_tab(self) -> None:
         split = ttk.Panedwindow(self.tab_incidents, orient="vertical")
@@ -679,8 +679,8 @@ class MonitorGUI(tk.Tk):
         split.add(topf, weight=1)
         split.add(botf, weight=1)
 
-        self.incidents_tree = self._new_tree(topf, ("Cluster", "Nodo", "Tipo", "Detalle"))
-        self.findings_tree = self._new_tree(botf, ("Cluster", "Nodo", "Hallazgo"))
+        self.incidents_tree = self._new_tree(topf, ("Cluster", "Nodo", "Tipo", "Detalle"), height=20)
+        self.findings_tree = self._new_tree(botf, ("Cluster", "Nodo", "Hallazgo"), height=20)
 
     def _build_peaks_tab(self) -> None:
         self.peaks_cluster_var = tk.StringVar(value="Europa")
@@ -693,8 +693,8 @@ class MonitorGUI(tk.Tk):
         split.add(topf, weight=3)
         split.add(botf, weight=1)
 
-        self.node_peaks_tree = self._new_tree(topf, ("Cluster", "Nodo", "Hora pico", "Encolados pico"))
-        self.total_peaks_tree = self._new_tree(botf, ("Cluster", "Hora pico", "Total pico"))
+        self.node_peaks_tree = self._new_tree(topf, ("Cluster", "Nodo", "Hora pico", "Encolados pico"), height=20)
+        self.total_peaks_tree = self._new_tree(botf, ("Cluster", "Hora pico", "Total pico"), height=20)
 
     # ---------------- Monitor lifecycle ----------------
     def load_credentials(self) -> Tuple[str, str]:
@@ -1049,9 +1049,15 @@ class MonitorGUI(tk.Tk):
         self.clear_tree(self.nodes_tree)
         self.configure_common_tags(self.nodes_tree)
 
+        selected_cluster = self.nodes_cluster_var.get() if hasattr(self, "nodes_cluster_var") else "Europa"
         for cluster in cluster_order():
+            if cluster != selected_cluster:
+                continue
             for nodo in sorted(self.current_data.get(cluster, {}).keys()):
                 r = self.current_data[cluster][nodo]
+                if self.nodes_node_var.get() not in ("", "Todos") and nodo != self.nodes_node_var.get():
+                    continue
+
                 prev = get_prev_queue(self.previous_data, cluster, nodo)
                 diff = r.encolados - prev
 
@@ -1078,7 +1084,10 @@ class MonitorGUI(tk.Tk):
         self.clear_tree(self.health_tree)
         self.configure_common_tags(self.health_tree)
 
+        selected_cluster = self.health_cluster_var.get() if hasattr(self, "health_cluster_var") else "Europa"
         for cluster in cluster_order():
+            if cluster != selected_cluster:
+                continue
             for nodo in sorted(self.current_data.get(cluster, {}).keys()):
                 r = self.current_data[cluster][nodo]
                 prev = get_prev_queue(self.previous_data, cluster, nodo)
