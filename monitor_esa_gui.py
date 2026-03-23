@@ -137,6 +137,9 @@ class Result:
 def cluster_order() -> List[str]:
     return ["Europa", "America", "Brasil", "Aplicaciones"]
 
+def cluster_filter_options() -> List[str]:
+    return ["Todos"] + cluster_order()
+
 def nodo_from_index(idx: int) -> str:
     return f"ESA{idx:02d}"
 
@@ -486,6 +489,10 @@ class MonitorGUI(tk.Tk):
         self.countdown_job = None
         self.seconds_remaining = 0
 
+        self.nodes_cluster_var = tk.StringVar(value="Todos")
+        self.health_cluster_var = tk.StringVar(value="Todos")
+        self.peaks_cluster_var = tk.StringVar(value="Todos")
+
         self._build_style()
         self._build_ui()
         self.after(200, self.process_ui_queue)
@@ -585,6 +592,23 @@ class MonitorGUI(tk.Tk):
 
         return tree
 
+    def _cluster_matches(self, selected_cluster: str, cluster: str) -> bool:
+        return selected_cluster == "Todos" or selected_cluster == cluster
+
+    def _build_filter_row(self, parent, label_text: str, variable: tk.StringVar, callback) -> None:
+        row = ttk.Frame(parent)
+        row.pack(fill="x", pady=(0, 6))
+        ttk.Label(row, text=label_text).pack(side="left", padx=(0, 6))
+        combo = ttk.Combobox(
+            row,
+            textvariable=variable,
+            values=cluster_filter_options(),
+            state="readonly",
+            width=18,
+        )
+        combo.pack(side="left")
+        combo.bind("<<ComboboxSelected>>", lambda _event: callback())
+
     def _build_summary_tab(self) -> None:
         top = ttk.Label(self.tab_summary, text="Resumen por cluster", style="Header.TLabel")
         top.pack(anchor="w", pady=(0, 6))
@@ -594,12 +618,14 @@ class MonitorGUI(tk.Tk):
     def _build_nodes_tab(self) -> None:
         top = ttk.Label(self.tab_nodes, text="Estado detallado por nodo", style="Header.TLabel")
         top.pack(anchor="w", pady=(0, 6))
+        self._build_filter_row(self.tab_nodes, "Cluster:", self.nodes_cluster_var, self.refresh_nodes_tab)
         cols = ("Cluster", "Nodo", "Status", "Encolados", "Anterior", "Var", "CPU", "RAM", "Conn In", "Conn Out", "Active Recips", "Error")
         self.nodes_tree = self._new_tree(self.tab_nodes, cols)
 
     def _build_health_tab(self) -> None:
         top = ttk.Label(self.tab_health, text="Salud operativa y diagnóstico", style="Header.TLabel")
         top.pack(anchor="w", pady=(0, 6))
+        self._build_filter_row(self.tab_health, "Cluster:", self.health_cluster_var, self.refresh_health_tab)
         cols = ("Cluster", "Nodo", "Health", "Diagnóstico", "Status", "CPU", "RAM", "Conn Out", "Active Recips")
         self.health_tree = self._new_tree(self.tab_health, cols)
 
@@ -616,6 +642,8 @@ class MonitorGUI(tk.Tk):
         self.findings_tree = self._new_tree(botf, ("Cluster", "Nodo", "Hallazgo"))
 
     def _build_peaks_tab(self) -> None:
+        self._build_filter_row(self.tab_peaks, "Cluster:", self.peaks_cluster_var, self.refresh_peaks_tab)
+
         split = ttk.Panedwindow(self.tab_peaks, orient="vertical")
         split.pack(fill="both", expand=True)
 
@@ -837,58 +865,74 @@ class MonitorGUI(tk.Tk):
         self.clear_tree(self.nodes_tree)
         self.configure_common_tags(self.nodes_tree)
 
+        selected_cluster = self.nodes_cluster_var.get()
+        rows = []
         for cluster in cluster_order():
+            if not self._cluster_matches(selected_cluster, cluster):
+                continue
             for nodo in sorted(self.current_data.get(cluster, {}).keys()):
-                r = self.current_data[cluster][nodo]
-                prev = get_prev_queue(self.previous_data, cluster, nodo)
-                diff = r.encolados - prev
+                rows.append((cluster, nodo, self.current_data[cluster][nodo]))
 
-                tag = "ok"
-                if r.error:
-                    tag = "error"
-                elif r.encolados >= CLUSTER_THRESHOLDS[cluster]["critical"]:
-                    tag = "critical"
-                elif r.encolados >= CLUSTER_THRESHOLDS[cluster]["warning"]:
-                    tag = "warning"
+        rows.sort(key=lambda item: item[1])
 
-                self.nodes_tree.insert(
-                    "", "end",
-                    values=(
-                        cluster, nodo, r.status, fmt_num_dot(r.encolados), fmt_num_dot(prev),
-                        f"{diff:+,}".replace(",", "."), f"{r.cpu}%", f"{r.ram}%",
-                        fmt_num_dot(r.conn_in), fmt_num_dot(r.conn_out), fmt_num_dot(r.active_recips),
-                        r.error or ""
-                    ),
-                    tags=(tag,)
-                )
+        for cluster, nodo, r in rows:
+            prev = get_prev_queue(self.previous_data, cluster, nodo)
+            diff = r.encolados - prev
+
+            tag = "ok"
+            if r.error:
+                tag = "error"
+            elif r.encolados >= CLUSTER_THRESHOLDS[cluster]["critical"]:
+                tag = "critical"
+            elif r.encolados >= CLUSTER_THRESHOLDS[cluster]["warning"]:
+                tag = "warning"
+
+            self.nodes_tree.insert(
+                "", "end",
+                values=(
+                    cluster, nodo, r.status, fmt_num_dot(r.encolados), fmt_num_dot(prev),
+                    f"{diff:+,}".replace(",", "."), f"{r.cpu}%", f"{r.ram}%",
+                    fmt_num_dot(r.conn_in), fmt_num_dot(r.conn_out), fmt_num_dot(r.active_recips),
+                    r.error or ""
+                ),
+                tags=(tag,)
+            )
 
     def refresh_health_tab(self) -> None:
         self.clear_tree(self.health_tree)
         self.configure_common_tags(self.health_tree)
 
+        selected_cluster = self.health_cluster_var.get()
+        rows = []
         for cluster in cluster_order():
+            if not self._cluster_matches(selected_cluster, cluster):
+                continue
             for nodo in sorted(self.current_data.get(cluster, {}).keys()):
-                r = self.current_data[cluster][nodo]
-                prev = get_prev_queue(self.previous_data, cluster, nodo)
-                hs = health_score(r, prev)
-                diag = diagnose_node(r, prev)
+                rows.append((cluster, nodo, self.current_data[cluster][nodo]))
 
-                tag = "ok"
-                if r.error:
-                    tag = "error"
-                elif hs < 60:
-                    tag = "critical"
-                elif hs < 80:
-                    tag = "warning"
+        rows.sort(key=lambda item: item[1])
 
-                self.health_tree.insert(
-                    "", "end",
-                    values=(
-                        cluster, nodo, f"{hs}%", diag, r.status, f"{r.cpu}%",
-                        f"{r.ram}%", fmt_num_dot(r.conn_out), fmt_num_dot(r.active_recips)
-                    ),
-                    tags=(tag,)
-                )
+        for cluster, nodo, r in rows:
+            prev = get_prev_queue(self.previous_data, cluster, nodo)
+            hs = health_score(r, prev)
+            diag = diagnose_node(r, prev)
+
+            tag = "ok"
+            if r.error:
+                tag = "error"
+            elif hs < 60:
+                tag = "critical"
+            elif hs < 80:
+                tag = "warning"
+
+            self.health_tree.insert(
+                "", "end",
+                values=(
+                    cluster, nodo, f"{hs}%", diag, r.status, f"{r.cpu}%",
+                    f"{r.ram}%", fmt_num_dot(r.conn_out), fmt_num_dot(r.active_recips)
+                ),
+                tags=(tag,)
+            )
 
     def refresh_incidents_tab(self) -> None:
         self.clear_tree(self.incidents_tree)
@@ -963,11 +1007,16 @@ class MonitorGUI(tk.Tk):
         self.configure_common_tags(self.node_peaks_tree)
         self.configure_common_tags(self.total_peaks_tree)
 
+        selected_cluster = self.peaks_cluster_var.get()
+
         for cluster in cluster_order():
+            if not self._cluster_matches(selected_cluster, cluster):
+                continue
+
             ranking = []
             for nodo, info in self.node_peaks.get(cluster, {}).items():
                 ranking.append((nodo, str(info["hora"]), int(info["encolados"])))
-            ranking.sort(key=lambda x: x[2], reverse=True)
+            ranking.sort(key=lambda x: x[0])
 
             if not ranking:
                 self.node_peaks_tree.insert("", "end", values=(cluster, "-", "--:--", "0"), tags=("ok",))
