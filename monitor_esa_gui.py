@@ -28,7 +28,7 @@ import csv
 import threading
 import queue
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 import xml.etree.ElementTree as ET
@@ -38,6 +38,12 @@ import requests
 import urllib3
 import tkinter as tk
 from tkinter import ttk, messagebox, filedialog
+
+import matplotlib
+matplotlib.use("TkAgg")
+from matplotlib.figure import Figure
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import matplotlib.dates as mdates
 
 # =========================================================
 # CONFIG
@@ -473,9 +479,15 @@ class MonitorGUI(tk.Tk):
 
         self.previous_data: Dict[str, Dict[str, int]] = {}
         self.current_data: Dict[str, Dict[str, Result]] = {}
-        self.queue_history: Dict[str, Dict[str, List[int]]] = {}
+        self.queue_history: Dict[str, Dict[str, List[Tuple[datetime, int]]]] = {}
         self.node_peaks: Dict[str, Dict[str, Dict[str, object]]] = {}
         self.total_peaks: Dict[str, Dict[str, object]] = {}
+
+        self.cluster_var_nodes = tk.StringVar(value="Europa")
+        self.node_var_nodes = tk.StringVar(value="Todos")
+        self.window_var_nodes = tk.StringVar(value="24")
+        self.cluster_var_health = tk.StringVar(value="Europa")
+        self.cluster_var_peaks = tk.StringVar(value="Europa")
 
         self.worker_thread: Optional[threading.Thread] = None
         self.stop_flag = threading.Event()
@@ -552,12 +564,14 @@ class MonitorGUI(tk.Tk):
         self._build_health_tab()
         self._build_incidents_tab()
         self._build_peaks_tab()
+        self.load_history_from_csv()
+        self.after(250, self.start_monitor)
 
     def _new_tree(self, parent, columns, stretch_last=True):
         frame = ttk.Frame(parent)
         frame.pack(fill="both", expand=True)
 
-        tree = ttk.Treeview(frame, columns=columns, show="headings")
+        tree = ttk.Treeview(frame, columns=columns, show="headings", height=20)
         ysb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
         xsb = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=ysb.set, xscrollcommand=xsb.set)
@@ -626,6 +640,80 @@ class MonitorGUI(tk.Tk):
 
         self.node_peaks_tree = self._new_tree(topf, ("Cluster", "Nodo", "Hora pico", "Encolados pico"))
         self.total_peaks_tree = self._new_tree(botf, ("Cluster", "Hora pico", "Total pico"))
+
+    def load_history_from_csv(self) -> None:
+        ensure_csv_dir()
+        cutoff = datetime.now() - timedelta(hours=24)
+        self.queue_history = {}
+        for cluster in cluster_order():
+            path = Path(build_cluster_csv_path(cluster, datetime.now()))
+            if not path.exists():
+                continue
+            hist_cluster: Dict[str, List[Tuple[datetime, int]]] = {}
+            try:
+                with open(path, newline="", encoding="utf-8") as f:
+                    reader = csv.DictReader(f, delimiter=";")
+                    for row in reader:
+                        try:
+                            dt = datetime.strptime(f"{row.get('fecha','')} {row.get('hora','')}", "%Y-%m-%d %H:%M:%S")
+                        except Exception:
+                            continue
+                        if dt < cutoff:
+                            continue
+                        nodo = row.get("nodo", "")
+                        if not nodo:
+                            continue
+                        val = to_int(row.get("encolados"))
+                        hist_cluster.setdefault(nodo, []).append((dt, val))
+                for nodo, vals in hist_cluster.items():
+                    vals.sort(key=lambda x: x[0])
+                    self.queue_history.setdefault(cluster, {})[nodo] = vals[-3000:]
+            except Exception:
+                continue
+
+    def get_history_values(self, cluster: str, nodo: str) -> List[Tuple[datetime, int]]:
+        vals = self.queue_history.get(cluster, {}).get(nodo, [])
+        out: List[Tuple[datetime, int]] = []
+        for v in vals:
+            if isinstance(v, tuple) and len(v) >= 2:
+                out.append((v[0], to_int(v[1])))
+            else:
+                out.append((datetime.now(), to_int(v)))
+        return out
+
+    def update_nodes_node_selector(self) -> None:
+        cluster = self.cluster_var_nodes.get() or "Europa"
+        nodos = sorted(self.current_data.get(cluster, {}).keys())
+        if not nodos and cluster in self.queue_history:
+            nodos = sorted(self.queue_history.get(cluster, {}).keys())
+        values = ["Todos"] + nodos
+        self.nodes_node_combo["values"] = values
+        if self.node_var_nodes.get() not in values:
+            self.node_var_nodes.set("Todos")
+
+    def on_nodes_cluster_changed(self) -> None:
+        self.update_nodes_node_selector()
+        self.node_var_nodes.set("Todos")
+        self.refresh_nodes_tab()
+
+    def on_nodes_tree_select(self, event=None) -> None:
+        selected = self.nodes_tree.selection()
+        if not selected:
+            return
+        vals = self.nodes_tree.item(selected[0], 'values')
+        if len(vals) >= 2:
+            self.node_var_nodes.set(vals[1])
+            self.refresh_nodes_chart()
+
+    def _tag_from_state(self, state: str) -> str:
+        s = (state or '').strip().upper()
+        if s == 'CRITICAL':
+            return 'critical'
+        if s == 'WARNING':
+            return 'warning'
+        if s == 'OK':
+            return 'ok'
+        return 'error'
 
     # ---------------- Monitor lifecycle ----------------
     def load_credentials(self) -> Tuple[str, str]:
@@ -707,8 +795,8 @@ class MonitorGUI(tk.Tk):
             for cluster, nodo_map in current_data.items():
                 self.queue_history.setdefault(cluster, {})
                 for nodo, r in nodo_map.items():
-                    self.queue_history[cluster].setdefault(nodo, []).append(r.encolados)
-                    self.queue_history[cluster][nodo] = self.queue_history[cluster][nodo][-5:]
+                    self.queue_history[cluster].setdefault(nodo, []).append((now, r.encolados))
+                    self.queue_history[cluster][nodo] = self.queue_history[cluster][nodo][-3000:]
 
             update_cluster_peaks(current_data, self.node_peaks, self.total_peaks, timestamp)
             incidents_active = has_incidents(current_data)
@@ -751,6 +839,7 @@ class MonitorGUI(tk.Tk):
         manual = payload["manual"]                      # type: ignore[assignment]
 
         self.updated_var.set(f"Última actualización: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+        self.update_nodes_node_selector()
         self.status_var.set("Estado: monitor activo")
         self.mode_var.set(f"Modo: {'incidencias' if incidents_active else 'normal'}")
 
@@ -786,10 +875,10 @@ class MonitorGUI(tk.Tk):
         return state
 
     def configure_common_tags(self, tree: ttk.Treeview) -> None:
-        tree.tag_configure("ok", background="#e8f5e9")
-        tree.tag_configure("warning", background="#fff8e1")
-        tree.tag_configure("critical", background="#ffebee")
-        tree.tag_configure("error", background="#fce4ec")
+        tree.tag_configure("ok", background="#c6efce", foreground="#000000")
+        tree.tag_configure("warning", background="#ffe699", foreground="#000000")
+        tree.tag_configure("critical", background="#f4cccc", foreground="#000000")
+        tree.tag_configure("error", background="#ead1dc", foreground="#000000")
 
     def refresh_summary_tab(self) -> None:
         self.clear_tree(self.summary_tree)
@@ -940,7 +1029,7 @@ class MonitorGUI(tk.Tk):
 
                 if len(hist) >= ADV_THRESHOLDS["stuck_cycles"]:
                     last = hist[-ADV_THRESHOLDS["stuck_cycles"]:]
-                    if all(v >= ADV_THRESHOLDS["stuck_min_queue"] for v in last) and r.conn_out <= ADV_THRESHOLDS["smtp_low_conn_out"]:
+                    if all((v[1] if isinstance(v, tuple) else v) >= ADV_THRESHOLDS["stuck_min_queue"] for v in last) and to_int(r.conn_out) <= ADV_THRESHOLDS["smtp_low_conn_out"]:
                         findings_added = True
                         self.findings_tree.insert("", "end", values=(cluster, r.nodo, f"Cola atascada ({fmt_num_dot(r.encolados)} en cola, salida {r.conn_out})"), tags=("critical",))
 
