@@ -49,6 +49,7 @@ CSV_OUTPUT_DIR = "csv_clusters_gui"
 TIMEOUT_SECONDS = 12
 MAX_WORKERS = 12
 RETRIES = 2
+# Cada consulta abre y cierra su propia sesión HTTP para evitar sesiones persistentes abiertas en ESA.
 
 REFRESH_SECONDS_NORMAL = 600
 REFRESH_SECONDS_INCIDENT = 180
@@ -405,34 +406,41 @@ def parse_status(xml_text: str) -> Tuple[str, Dict[str, int]]:
     return system_status, {**gauges, **rates}
 
 def fetch_one(
-    session: requests.Session, url: str, auth: Tuple[str, str], timestamp: str, cluster: str, idx: int
+    url: str, auth: Tuple[str, str], timestamp: str, cluster: str, idx: int
 ) -> Result:
     nodo = nodo_from_index(idx)
     last_err: Optional[str] = None
     for _ in range(RETRIES + 1):
         try:
-            r = session.get(
-                url,
-                auth=auth,
-                timeout=TIMEOUT_SECONDS,
-                verify=VERIFY_SSL,
-                headers={"Accept": "application/xml"},
-            )
-            if r.status_code != 200:
-                return Result(timestamp, nodo, cluster, "offline", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, f"HTTP {r.status_code}")
+            with requests.Session() as session:
+                session.headers.update({
+                    "Accept": "application/xml",
+                    "Connection": "close",
+                })
+                response = session.get(
+                    url,
+                    auth=auth,
+                    timeout=TIMEOUT_SECONDS,
+                    verify=VERIFY_SSL,
+                )
+                try:
+                    if response.status_code != 200:
+                        return Result(timestamp, nodo, cluster, "offline", 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, f"HTTP {response.status_code}")
 
-            status, m = parse_status(r.text)
-            return Result(
-                timestamp=timestamp, nodo=nodo, cluster=cluster, status=status,
-                encolados=m["msgs_in_work_queue"], cpu=m["cpu_utilization"], ram=m["ram_utilization"],
-                conn_in=m["conn_in"], conn_out=m["conn_out"], active_recips=m["active_recips"],
-                inj_msgs_1m=m["inj_msgs_1m"], inj_msgs_5m=m["inj_msgs_5m"], inj_msgs_15m=m["inj_msgs_15m"],
-                delivered_recips_1m=m["delivered_recips_1m"], delivered_recips_5m=m["delivered_recips_5m"], delivered_recips_15m=m["delivered_recips_15m"],
-                inj_recips_1m=m["inj_recips_1m"], inj_recips_5m=m["inj_recips_5m"], inj_recips_15m=m["inj_recips_15m"],
-                completed_recips_1m=m["completed_recips_1m"], completed_recips_5m=m["completed_recips_5m"], completed_recips_15m=m["completed_recips_15m"],
-                soft_bounced_evts_1m=m["soft_bounced_evts_1m"], soft_bounced_evts_5m=m["soft_bounced_evts_5m"], soft_bounced_evts_15m=m["soft_bounced_evts_15m"],
-                error=None,
-            )
+                    status, m = parse_status(response.text)
+                    return Result(
+                        timestamp=timestamp, nodo=nodo, cluster=cluster, status=status,
+                        encolados=m["msgs_in_work_queue"], cpu=m["cpu_utilization"], ram=m["ram_utilization"],
+                        conn_in=m["conn_in"], conn_out=m["conn_out"], active_recips=m["active_recips"],
+                        inj_msgs_1m=m["inj_msgs_1m"], inj_msgs_5m=m["inj_msgs_5m"], inj_msgs_15m=m["inj_msgs_15m"],
+                        delivered_recips_1m=m["delivered_recips_1m"], delivered_recips_5m=m["delivered_recips_5m"], delivered_recips_15m=m["delivered_recips_15m"],
+                        inj_recips_1m=m["inj_recips_1m"], inj_recips_5m=m["inj_recips_5m"], inj_recips_15m=m["inj_recips_15m"],
+                        completed_recips_1m=m["completed_recips_1m"], completed_recips_5m=m["completed_recips_5m"], completed_recips_15m=m["completed_recips_15m"],
+                        soft_bounced_evts_1m=m["soft_bounced_evts_1m"], soft_bounced_evts_5m=m["soft_bounced_evts_5m"], soft_bounced_evts_15m=m["soft_bounced_evts_15m"],
+                        error=None,
+                    )
+                finally:
+                    response.close()
         except requests.exceptions.RequestException as e:
             last_err = str(e)
         except ET.ParseError as e:
@@ -450,7 +458,7 @@ def fetch_one(
     )
 
 def fetch_cluster(
-    session: requests.Session, group: Dict, auth: Tuple[str, str], timestamp: str
+    group: Dict, auth: Tuple[str, str], timestamp: str
 ) -> List[Result]:
     cluster = group["cluster"]
     pattern = group["pattern"]
@@ -460,7 +468,7 @@ def fetch_cluster(
 
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as ex:
         futures = [
-            ex.submit(fetch_one, session, pattern.format(idx=i), auth, timestamp, cluster, i)
+            ex.submit(fetch_one, pattern.format(idx=i), auth, timestamp, cluster, i)
             for i in range(start, end + 1)
         ]
         for fut in as_completed(futures):
