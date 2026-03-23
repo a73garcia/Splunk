@@ -28,7 +28,7 @@ import csv
 import threading
 import queue
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Optional, Dict, List, Tuple
 import xml.etree.ElementTree as ET
@@ -521,8 +521,11 @@ class MonitorGUI(tk.Tk):
 
         self._build_style()
         self._build_ui()
+        self._load_history_from_csv(hours_back=24)
+        self.on_nodes_cluster_changed()
         self.after(200, self.process_ui_queue)
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.after(300, self.start_monitor)
 
     # ---------------- UI ----------------
     def _build_style(self) -> None:
@@ -543,6 +546,8 @@ class MonitorGUI(tk.Tk):
         main.pack(fill="both", expand=True)
 
         # Top controls
+        self._build_menu()
+
         top = ttk.Frame(main)
         top.pack(fill="x", pady=(0, 10))
 
@@ -551,6 +556,7 @@ class MonitorGUI(tk.Tk):
         ttk.Button(top, text="Refrescar ahora", command=self.manual_refresh).pack(side="left", padx=4)
         ttk.Button(top, text="Abrir carpeta CSV", command=self.open_csv_folder).pack(side="left", padx=4)
         ttk.Button(top, text="Exportar resumen", command=self.export_summary_csv).pack(side="left", padx=4)
+        ttk.Button(top, text="Cerrar aplicación", command=self.on_close).pack(side="right", padx=4)
 
         self.status_var = tk.StringVar(value="Estado: detenido")
         self.mode_var = tk.StringVar(value="Modo: normal")
@@ -586,11 +592,25 @@ class MonitorGUI(tk.Tk):
         self._build_incidents_tab()
         self._build_peaks_tab()
 
+
+    def _build_menu(self) -> None:
+        menubar = tk.Menu(self)
+        menu_archivo = tk.Menu(menubar, tearoff=0)
+        menu_archivo.add_command(label="Iniciar", command=self.start_monitor)
+        menu_archivo.add_command(label="Detener", command=self.stop_monitor)
+        menu_archivo.add_separator()
+        menu_archivo.add_command(label="Abrir carpeta CSV", command=self.open_csv_folder)
+        menu_archivo.add_command(label="Exportar resumen", command=self.export_summary_csv)
+        menu_archivo.add_separator()
+        menu_archivo.add_command(label="Cerrar aplicación", command=self.on_close)
+        menubar.add_cascade(label="Archivo", menu=menu_archivo)
+        self.config(menu=menubar)
+
     def _new_tree(self, parent, columns, stretch_last=True):
         frame = ttk.Frame(parent)
         frame.pack(fill="both", expand=True)
 
-        tree = ttk.Treeview(frame, columns=columns, show="headings")
+        tree = ttk.Treeview(frame, columns=columns, show="headings", height=20)
         ysb = ttk.Scrollbar(frame, orient="vertical", command=tree.yview)
         xsb = ttk.Scrollbar(frame, orient="horizontal", command=tree.xview)
         tree.configure(yscrollcommand=ysb.set, xscrollcommand=xsb.set)
@@ -647,7 +667,7 @@ class MonitorGUI(tk.Tk):
         self.nodes_node_combo.pack(side="left", padx=(6, 12))
         self.nodes_node_combo.bind("<<ComboboxSelected>>", lambda e: self.refresh_nodes_tab())
 
-        ttk.Label(controls, text="Ventana:").pack(side="left")
+        ttk.Label(controls, text="Horas:").pack(side="left")
         self.nodes_window_combo = ttk.Combobox(
             controls, textvariable=self.window_var_nodes, values=["1", "3", "6", "12", "24"],
             width=6, state="readonly"
@@ -660,6 +680,7 @@ class MonitorGUI(tk.Tk):
         table_frame.pack(fill="both", expand=True)
         self.nodes_tree = self._new_tree(table_frame, cols)
         self.nodes_tree.bind("<<TreeviewSelect>>", self.on_nodes_tree_select)
+        self.nodes_tree.bind("<Escape>", self.on_nodes_tree_escape)
 
         chart_wrap = ttk.Labelframe(self.tab_nodes, text="Histórico de encolados")
         chart_wrap.pack(fill="both", expand=False, pady=(8, 0))
@@ -876,10 +897,10 @@ class MonitorGUI(tk.Tk):
         return state
 
     def configure_common_tags(self, tree: ttk.Treeview) -> None:
-        tree.tag_configure("ok", background="#e8f5e9")
-        tree.tag_configure("warning", background="#fff8e1")
-        tree.tag_configure("critical", background="#ffebee")
-        tree.tag_configure("error", background="#fce4ec")
+        tree.tag_configure("ok", foreground="#17803d")
+        tree.tag_configure("warning", foreground="#d97706")
+        tree.tag_configure("critical", foreground="#c62828")
+        tree.tag_configure("error", foreground="#c62828")
 
     def refresh_summary_tab(self) -> None:
         self.clear_tree(self.summary_tree)
@@ -1091,11 +1112,11 @@ class MonitorGUI(tk.Tk):
 
     def on_nodes_cluster_changed(self) -> None:
         cluster = self.cluster_var_nodes.get() or "Europa"
-        nodos = sorted(self.current_data.get(cluster, {}).keys())
+        nodos = sorted(set(self.current_data.get(cluster, {}).keys()) | set(self.queue_history.get(cluster, {}).keys()))
         values = ["Todos"] + nodos if nodos else ["Todos"]
         self.nodes_node_combo["values"] = values
-        if self.node_var_nodes.get() not in values:
-            self.node_var_nodes.set("Todos")
+        self.node_var_nodes.set("Todos")
+        self.nodes_tree.selection_remove(*self.nodes_tree.selection())
         self.refresh_nodes_tab()
 
     def on_nodes_tree_select(self, event=None) -> None:
@@ -1109,6 +1130,62 @@ class MonitorGUI(tk.Tk):
             if nodo in combo_values:
                 self.node_var_nodes.set(nodo)
                 self.refresh_nodes_tab()
+
+    def on_nodes_tree_escape(self, event=None) -> str:
+        self.nodes_tree.selection_remove(*self.nodes_tree.selection())
+        self.nodes_tree.focus("")
+        self.node_var_nodes.set("Todos")
+        self.refresh_nodes_tab()
+        return "break"
+
+    def _load_history_from_csv(self, hours_back: int = 24) -> None:
+        ensure_csv_dir()
+        base = Path(CSV_OUTPUT_DIR)
+        if not base.exists():
+            return
+
+        cutoff = datetime.now() - timedelta(hours=hours_back)
+        loaded: Dict[str, Dict[str, List[Tuple[datetime, int]]]] = {}
+
+        for csv_path in sorted(base.glob("*.csv")):
+            try:
+                with open(csv_path, "r", encoding="utf-8") as f:
+                    reader = csv.DictReader(f, delimiter=";")
+                    for row in reader:
+                        cluster = (row.get("cluster") or "").strip()
+                        nodo = (row.get("nodo") or "").strip()
+                        if not cluster or not nodo:
+                            continue
+
+                        dt = None
+                        fecha = (row.get("fecha") or "").strip()
+                        hora = (row.get("hora") or "").strip()
+                        if fecha and hora:
+                            try:
+                                dt = datetime.strptime(f"{fecha} {hora}", "%Y-%m-%d %H:%M:%S")
+                            except Exception:
+                                dt = None
+                        if dt is None:
+                            ts = (row.get("timestamp") or "").strip()
+                            try:
+                                dt = datetime.strptime(ts, "%H:%M")
+                                dt = datetime.combine(datetime.now().date(), dt.time())
+                            except Exception:
+                                continue
+
+                        if dt < cutoff:
+                            continue
+
+                        val = to_int(row.get("encolados"))
+                        loaded.setdefault(cluster, {}).setdefault(nodo, []).append((dt, val))
+            except Exception:
+                continue
+
+        for cluster, nodo_map in loaded.items():
+            self.queue_history.setdefault(cluster, {})
+            for nodo, pts in nodo_map.items():
+                pts.sort(key=lambda x: x[0])
+                self.queue_history[cluster][nodo] = pts[-300:]
 
     def _history_points(self, cluster: str, nodo: str, hours: int):
         items = self.queue_history.get(cluster, {}).get(nodo, [])
@@ -1147,7 +1224,7 @@ class MonitorGUI(tk.Tk):
         except Exception:
             hours = 24
 
-        node_names = sorted(self.current_data.get(cluster, {}).keys())
+        node_names = sorted(set(self.current_data.get(cluster, {}).keys()) | set(self.queue_history.get(cluster, {}).keys()))
         if node_sel != "Todos":
             node_names = [n for n in node_names if n == node_sel]
 
