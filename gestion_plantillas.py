@@ -36,7 +36,6 @@ class PlantillasApp:
         """)
         self.conn.commit()
 
-        # Compatibilidad por si la tabla ya existía con esquema anterior
         self.cursor.execute("PRAGMA table_info(plantillas)")
         columnas = self.cursor.fetchall()
         nombres_columnas = [c[1] for c in columnas]
@@ -198,7 +197,6 @@ class PlantillasApp:
         self.lbl_estado = ttk.Label(self.root, text="Listo", anchor="w")
         self.lbl_estado.pack(fill="x", padx=10, pady=(0, 8))
 
-        # Ajuste de crecimiento de columnas y filas
         self.frame_form.columnconfigure(0, weight=0)
         self.frame_form.columnconfigure(1, weight=1)
         self.frame_form.columnconfigure(2, weight=0)
@@ -213,6 +211,23 @@ class PlantillasApp:
 
     def actualizar_estado(self, texto):
         self.lbl_estado.config(text=texto)
+
+    def normalizar_texto_tabla(self, texto):
+        if texto is None:
+            return ""
+        return " ".join(str(texto).split())
+
+    def recortar_con_ellipsis(self, texto, limite=70):
+        texto = self.normalizar_texto_tabla(texto)
+        if len(texto) <= limite:
+            return texto
+        return texto[:limite - 1].rstrip() + "…"
+
+    def preparar_fila_tabla(self, fila):
+        fila = list(fila)
+        fila[4] = self.recortar_con_ellipsis(fila[4], 75)  # descripción
+        fila[5] = self.recortar_con_ellipsis(fila[5], 75)  # respuesta
+        return tuple(fila)
 
     def copiar_descripcion(self):
         contenido = self.txt_descripcion.get("1.0", tk.END).strip()
@@ -241,7 +256,8 @@ class PlantillasApp:
     def insertar_en_tabla(self, registros):
         self.limpiar_treeview()
         for fila in registros:
-            self.tree.insert("", tk.END, values=fila)
+            fila_mostrable = self.preparar_fila_tabla(fila)
+            self.tree.insert("", tk.END, values=fila_mostrable)
         self.actualizar_estado(f"Registros mostrados: {len(registros)}")
 
     def cargar_registros(self):
@@ -331,6 +347,14 @@ class PlantillasApp:
         self.entry_fecha_hasta.delete(0, tk.END)
         self.cargar_registros()
 
+    def obtener_registro_completo_por_id(self, registro_id):
+        self.cursor.execute("""
+            SELECT id, fecha, nombre, COALESCE(numero_peticion, ''), descripcion, respuesta
+            FROM plantillas
+            WHERE id = ?
+        """, (registro_id,))
+        return self.cursor.fetchone()
+
     def seleccionar_registro(self, event=None):
         seleccion = self.tree.selection()
         if not seleccion:
@@ -338,8 +362,12 @@ class PlantillasApp:
 
         item = self.tree.item(seleccion[0])
         valores = item["values"]
-        if valores:
-            self.cargar_formulario_desde_valores(valores)
+        if not valores:
+            return
+
+        registro_completo = self.obtener_registro_completo_por_id(valores[0])
+        if registro_completo:
+            self.cargar_formulario_desde_valores(registro_completo)
 
     def abrir_registro_doble_click(self, event=None):
         item_id = self.tree.identify_row(event.y) if event else None
@@ -348,8 +376,10 @@ class PlantillasApp:
             item = self.tree.item(item_id)
             valores = item["values"]
             if valores:
-                self.cargar_formulario_desde_valores(valores)
-                self.actualizar_estado(f"Registro ID {valores[0]} abierto con doble clic.")
+                registro_completo = self.obtener_registro_completo_por_id(valores[0])
+                if registro_completo:
+                    self.cargar_formulario_desde_valores(registro_completo)
+                    self.actualizar_estado(f"Registro ID {registro_completo[0]} abierto con doble clic.")
 
     def cargar_formulario_desde_valores(self, valores):
         self.selected_id = valores[0]
