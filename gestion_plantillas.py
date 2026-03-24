@@ -55,27 +55,27 @@ class PlantillasApp:
         self.frame_filtros = ttk.LabelFrame(self.root, text="Filtros avanzados")
         self.frame_filtros.pack(fill="x", padx=10, pady=8)
 
-        ttk.Label(self.frame_filtros, text="Palabra clave:").grid(row=0, column=0, padx=6, pady=6, sticky="w")
+        ttk.Label(self.frame_filtros, text="Palabra clave:").grid(row=0, column=0, padx=(6, 2), pady=6, sticky="w")
         self.entry_busqueda = ttk.Entry(self.frame_filtros, width=28)
-        self.entry_busqueda.grid(row=0, column=1, padx=6, pady=6, sticky="w")
+        self.entry_busqueda.grid(row=0, column=1, padx=(0, 8), pady=6, sticky="w")
 
-        ttk.Label(self.frame_filtros, text="Nombre:").grid(row=0, column=2, padx=6, pady=6, sticky="w")
+        ttk.Label(self.frame_filtros, text="Nombre:").grid(row=0, column=2, padx=(6, 2), pady=6, sticky="w")
         self.entry_filtro_nombre = ttk.Entry(self.frame_filtros, width=22)
-        self.entry_filtro_nombre.grid(row=0, column=3, padx=6, pady=6, sticky="w")
+        self.entry_filtro_nombre.grid(row=0, column=3, padx=(0, 8), pady=6, sticky="w")
 
-        ttk.Label(self.frame_filtros, text="Nº Petición:").grid(row=0, column=4, padx=6, pady=6, sticky="w")
+        ttk.Label(self.frame_filtros, text="Nº Petición:").grid(row=0, column=4, padx=(6, 2), pady=6, sticky="w")
         self.entry_filtro_peticion = ttk.Entry(self.frame_filtros, width=22)
-        self.entry_filtro_peticion.grid(row=0, column=5, padx=6, pady=6, sticky="w")
+        self.entry_filtro_peticion.grid(row=0, column=5, padx=(0, 8), pady=6, sticky="w")
 
-        ttk.Label(self.frame_filtros, text="Fecha desde:").grid(row=1, column=0, padx=6, pady=6, sticky="w")
+        ttk.Label(self.frame_filtros, text="Fecha desde:").grid(row=1, column=0, padx=(6, 2), pady=6, sticky="w")
         self.entry_fecha_desde = ttk.Entry(self.frame_filtros, width=15)
-        self.entry_fecha_desde.grid(row=1, column=1, padx=6, pady=6, sticky="w")
+        self.entry_fecha_desde.grid(row=1, column=1, padx=(0, 8), pady=6, sticky="w")
 
-        ttk.Label(self.frame_filtros, text="Fecha hasta:").grid(row=1, column=2, padx=6, pady=6, sticky="w")
+        ttk.Label(self.frame_filtros, text="Fecha hasta:").grid(row=1, column=2, padx=(6, 2), pady=6, sticky="w")
         self.entry_fecha_hasta = ttk.Entry(self.frame_filtros, width=15)
-        self.entry_fecha_hasta.grid(row=1, column=3, padx=6, pady=6, sticky="w")
+        self.entry_fecha_hasta.grid(row=1, column=3, padx=(0, 8), pady=6, sticky="w")
 
-        ttk.Label(self.frame_filtros, text="Formato fecha: YYYY-MM-DD").grid(row=1, column=4, padx=6, pady=6, sticky="w")
+        ttk.Label(self.frame_filtros, text="Formato fecha: YYYY-MM-DD").grid(row=1, column=4, padx=(6, 2), pady=6, sticky="w")
 
         frame_botones_filtro = ttk.Frame(self.frame_filtros)
         frame_botones_filtro.grid(row=0, column=6, rowspan=2, padx=10, pady=4, sticky="ns")
@@ -105,10 +105,10 @@ class PlantillasApp:
 
         self.tree.column("id", width=70, anchor="center")
         self.tree.column("fecha", width=110, anchor="center")
-        self.tree.column("nombre", width=180, anchor="w")
+        self.tree.column("nombre", width=220, anchor="w")
         self.tree.column("numero_peticion", width=130, anchor="center")
-        self.tree.column("descripcion", width=420, anchor="w")
-        self.tree.column("respuesta", width=420, anchor="w")
+        self.tree.column("descripcion", width=400, anchor="w")
+        self.tree.column("respuesta", width=400, anchor="w")
 
         scroll_y = ttk.Scrollbar(self.frame_tabla, orient="vertical", command=self.tree.yview)
         scroll_x = ttk.Scrollbar(self.frame_tabla, orient="horizontal", command=self.tree.xview)
@@ -127,29 +127,34 @@ class PlantillasApp:
         self.frame_form = ttk.LabelFrame(self.root, text="Formulario de plantilla")
         self.frame_form.pack(fill="both", padx=10, pady=8)
 
-        ttk.Label(self.frame_form, text="ID:").grid(row=0, column=0, padx=8, pady=8, sticky="w")
+        ttk.Label(self.frame_form, text="ID:").grid(row=0, column=0, padx=(8, 2), pady=8, sticky="w")
         self.var_id = tk.StringVar()
-        self.entry_id = ttk.Entry(self.frame_form, textvariable=self.var_id, width=12, state="readonly")
-        self.entry_id.grid(row=0, column=1, padx=8, pady=8, sticky="w")
+        self.entry_id = ttk.Entry(
+            self.frame_form,
+            textvariable=self.var_id,
+            width=10,
+            state="readonly"
+        )
+        self.entry_id.grid(row=0, column=1, padx=(0, 8), pady=8, sticky="w")
 
-        ttk.Label(self.frame_form, text="Fecha:").grid(row=0, column=2, padx=8, pady=8, sticky="w")
+        ttk.Label(self.frame_form, text="Fecha:").grid(row=0, column=2, padx=(8, 2), pady=8, sticky="w")
         self.var_fecha = tk.StringVar(value=datetime.now().strftime("%Y-%m-%d"))
         self.entry_fecha = ttk.Entry(self.frame_form, textvariable=self.var_fecha, width=16)
-        self.entry_fecha.grid(row=0, column=3, padx=8, pady=8, sticky="w")
+        self.entry_fecha.grid(row=0, column=3, padx=(0, 8), pady=8, sticky="w")
 
-        ttk.Label(self.frame_form, text="Nombre:").grid(row=0, column=4, padx=8, pady=8, sticky="w")
+        ttk.Label(self.frame_form, text="Nombre:").grid(row=0, column=4, padx=(8, 2), pady=8, sticky="w")
         self.var_nombre = tk.StringVar()
-        self.entry_nombre = ttk.Entry(self.frame_form, textvariable=self.var_nombre, width=30)
-        self.entry_nombre.grid(row=0, column=5, padx=8, pady=8, sticky="w")
+        self.entry_nombre = ttk.Entry(self.frame_form, textvariable=self.var_nombre, width=45)
+        self.entry_nombre.grid(row=0, column=5, padx=(0, 8), pady=8, sticky="w")
 
-        ttk.Label(self.frame_form, text="Nº Petición:").grid(row=0, column=6, padx=8, pady=8, sticky="w")
+        ttk.Label(self.frame_form, text="Nº Petición:").grid(row=0, column=6, padx=(8, 2), pady=8, sticky="w")
         self.var_numero_peticion = tk.StringVar()
         self.entry_numero_peticion = ttk.Entry(self.frame_form, textvariable=self.var_numero_peticion, width=24)
-        self.entry_numero_peticion.grid(row=0, column=7, padx=8, pady=8, sticky="w")
+        self.entry_numero_peticion.grid(row=0, column=7, padx=(0, 8), pady=8, sticky="w")
 
-        ttk.Label(self.frame_form, text="Descripción:").grid(row=1, column=0, padx=8, pady=8, sticky="nw")
+        ttk.Label(self.frame_form, text="Descripción:").grid(row=1, column=0, padx=(8, 2), pady=8, sticky="nw")
         self.txt_descripcion = ScrolledText(self.frame_form, wrap="word", width=75, height=10, font=("Segoe UI", 10))
-        self.txt_descripcion.grid(row=1, column=1, columnspan=4, padx=8, pady=8, sticky="nsew")
+        self.txt_descripcion.grid(row=1, column=1, columnspan=4, padx=(0, 8), pady=8, sticky="nsew")
 
         frame_desc = ttk.Frame(self.frame_form)
         frame_desc.grid(row=1, column=5, padx=8, pady=8, sticky="n")
@@ -157,9 +162,9 @@ class PlantillasApp:
         ttk.Button(frame_desc, text="Copiar descripción", command=self.copiar_descripcion).pack(fill="x", pady=3)
         ttk.Button(frame_desc, text="Limpiar descripción", command=lambda: self.txt_descripcion.delete("1.0", tk.END)).pack(fill="x", pady=3)
 
-        ttk.Label(self.frame_form, text="Respuesta:").grid(row=2, column=0, padx=8, pady=8, sticky="nw")
+        ttk.Label(self.frame_form, text="Respuesta:").grid(row=2, column=0, padx=(8, 2), pady=8, sticky="nw")
         self.txt_respuesta = ScrolledText(self.frame_form, wrap="word", width=75, height=10, font=("Segoe UI", 10))
-        self.txt_respuesta.grid(row=2, column=1, columnspan=4, padx=8, pady=8, sticky="nsew")
+        self.txt_respuesta.grid(row=2, column=1, columnspan=4, padx=(0, 8), pady=8, sticky="nsew")
 
         frame_resp = ttk.Frame(self.frame_form)
         frame_resp.grid(row=2, column=5, padx=8, pady=8, sticky="n")
@@ -179,10 +184,9 @@ class PlantillasApp:
         self.lbl_estado = ttk.Label(self.root, text="Listo", anchor="w")
         self.lbl_estado.pack(fill="x", padx=10, pady=(0, 8))
 
-        self.frame_form.columnconfigure(1, weight=1)
-        self.frame_form.columnconfigure(2, weight=0)
+        self.frame_form.columnconfigure(1, weight=0)
         self.frame_form.columnconfigure(3, weight=0)
-        self.frame_form.columnconfigure(4, weight=1)
+        self.frame_form.columnconfigure(5, weight=1)
         self.frame_form.rowconfigure(1, weight=1)
         self.frame_form.rowconfigure(2, weight=1)
 
