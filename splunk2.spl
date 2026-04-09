@@ -4,6 +4,7 @@ import re
 from copy import deepcopy
 from datetime import datetime
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk, messagebox, filedialog
 
 DATA_FILE = "splunk_busquedas.json"
@@ -242,6 +243,7 @@ class SearchManagerApp:
 
         parent.columnconfigure(0, weight=1)
         self.reload_category_filter()
+        self.autoajustar_columnas_biblioteca()
 
     def _build_table(self, parent):
         ttk.Label(parent, text="Biblioteca de búsquedas", font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(0, 10))
@@ -272,6 +274,32 @@ class SearchManagerApp:
         self.tree.bind("<<TreeviewSelect>>", self.on_select)
         for color_name, bg in COLOR_MAP.items():
             self.tree.tag_configure(color_name, background=bg)
+
+    def autoajustar_columnas_biblioteca(self):
+        font_body = tkfont.nametofont("TkDefaultFont")
+        try:
+            font_head = tkfont.nametofont("TkHeadingFont")
+        except tk.TclError:
+            font_head = font_body
+
+        limites = {
+            "id": 55,
+            "nombre": 300,
+            "categoria": 150,
+            "tecnologia": 160,
+            "fecha": 165,
+        }
+
+        for col in self.tree["columns"]:
+            heading_text = self.tree.heading(col, "text") or col
+            ancho = font_head.measure(str(heading_text))
+
+            for item in self.tree.get_children():
+                valor = self.tree.set(item, col)
+                ancho = max(ancho, font_body.measure(str(valor)))
+
+            ancho = min(ancho + 24, limites.get(col, 180))
+            self.tree.column(col, width=ancho)
 
     def _build_editor(self, parent):
         ttk.Label(parent, text="Detalle / edición", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, columnspan=6, sticky="w", pady=(0, 10))
