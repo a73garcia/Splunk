@@ -309,7 +309,8 @@ class SearchManagerApp:
         quick = ttk.Frame(parent)
         quick.grid(row=row, column=1, columnspan=5, sticky="ew", pady=(4, 0))
         ttk.Button(quick, text="Formatear SPL", command=self.format_spl).pack(side="left", padx=(0, 6))
-        ttk.Button(quick, text="Copiar SPL", command=self.copy_spl).pack(side="left", padx=(0, 6))
+        ttk.Button(quick, text="Copiar todo", command=self.copy_spl).pack(side="left", padx=(0, 6))
+        ttk.Button(quick, text="Copiar selección", command=self.copy_selected_spl).pack(side="left", padx=(0, 6))
         ttk.Button(quick, text="Snippet ESA", command=lambda: self.insert_snippet("ESA")).pack(side="left", padx=(0, 6))
         ttk.Button(quick, text="Snippet M365", command=lambda: self.insert_snippet("M365")).pack(side="left")
 
@@ -372,6 +373,8 @@ class SearchManagerApp:
         ttk.Button(actions, text="Guardar", command=self.save_record).pack(side="left", padx=6)
         ttk.Button(actions, text="Duplicar", command=self.duplicate_record).pack(side="left", padx=6)
         ttk.Button(actions, text="Borrar", command=self.delete_record).pack(side="left", padx=6)
+        ttk.Button(actions, text="Copiar todo", command=self.copy_spl).pack(side="left", padx=6)
+        ttk.Button(actions, text="Copiar selección", command=self.copy_selected_spl).pack(side="left", padx=6)
         ttk.Button(actions, text="Refrescar", command=self.refresh_tree).pack(side="left", padx=6)
 
         parent.columnconfigure(1, weight=3)
@@ -546,15 +549,30 @@ class SearchManagerApp:
         self.refresh_tree()
         messagebox.showinfo("OK", "Registro eliminado.")
 
+    def _copy_to_clipboard(self, content, success_message):
+        self.root.clipboard_clear()
+        self.root.clipboard_append(content)
+        self.root.update()
+        messagebox.showinfo("OK", success_message)
+
     def copy_spl(self):
         spl = self.txt_spl.get("1.0", tk.END).strip()
         if not spl:
             messagebox.showwarning("Copiar", "No hay SPL para copiar.")
             return
-        self.root.clipboard_clear()
-        self.root.clipboard_append(spl)
-        self.root.update()
-        messagebox.showinfo("OK", "SPL copiado al portapapeles.")
+        self._copy_to_clipboard(spl, "Todo el SPL se ha copiado al portapapeles.")
+
+    def copy_selected_spl(self):
+        try:
+            selected_text = self.txt_spl.get(tk.SEL_FIRST, tk.SEL_LAST).strip()
+        except tk.TclError:
+            selected_text = ""
+
+        if not selected_text:
+            messagebox.showwarning("Copiar selección", "No hay texto seleccionado en el editor SPL.")
+            return
+
+        self._copy_to_clipboard(selected_text, "La selección del SPL se ha copiado al portapapeles.")
 
     def format_spl(self):
         text = self.txt_spl.get("1.0", tk.END).strip()
