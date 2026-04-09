@@ -195,8 +195,8 @@ class SearchManagerApp:
         right = ttk.Frame(main, padding=8)
 
         main.add(left, weight=1)
-        main.add(center, weight=2)
-        main.add(right, weight=2)
+        main.add(center, weight=8)
+        main.add(right, weight=12)
 
         self._build_filters(left)
         self._build_table(center)
@@ -274,40 +274,40 @@ class SearchManagerApp:
             self.tree.tag_configure(color_name, background=bg)
 
     def _build_editor(self, parent):
-        ttk.Label(parent, text="Detalle / edición", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 10))
+        ttk.Label(parent, text="Detalle / edición", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, columnspan=6, sticky="w", pady=(0, 10))
 
         row = 1
         ttk.Label(parent, text="Nombre *").grid(row=row, column=0, sticky="w")
         ttk.Entry(parent, textvariable=self.var_nombre).grid(row=row, column=1, sticky="ew", pady=3, padx=(0, 12))
 
         ttk.Label(parent, text="Categoría").grid(row=row, column=2, sticky="w")
-        ttk.Entry(parent, textvariable=self.var_categoria).grid(row=row, column=3, sticky="ew", pady=3)
+        ttk.Entry(parent, textvariable=self.var_categoria).grid(row=row, column=3, sticky="ew", pady=3, padx=(0, 12))
+
+        ttk.Label(parent, text="Tecnología").grid(row=row, column=4, sticky="w")
+        cmb_tecnologia = ttk.Combobox(parent, textvariable=self.var_tecnologia, state="readonly", values=TECNOLOGIAS)
+        cmb_tecnologia.grid(row=row, column=5, sticky="ew", pady=3)
+        cmb_tecnologia.bind("<<ComboboxSelected>>", lambda e: self.on_tecnologia_changed())
 
         row += 1
         ttk.Label(parent, text="Entorno").grid(row=row, column=0, sticky="w")
         ttk.Combobox(parent, textvariable=self.var_entorno, state="readonly", values=ENTORNOS).grid(row=row, column=1, sticky="ew", pady=3, padx=(0, 12))
 
-        ttk.Label(parent, text="Tecnología").grid(row=row, column=2, sticky="w")
-        cmb_tecnologia = ttk.Combobox(parent, textvariable=self.var_tecnologia, state="readonly", values=TECNOLOGIAS)
-        cmb_tecnologia.grid(row=row, column=3, sticky="ew", pady=3)
-        cmb_tecnologia.bind("<<ComboboxSelected>>", lambda e: self.on_tecnologia_changed())
+        ttk.Label(parent, text="Prioridad").grid(row=row, column=2, sticky="w")
+        ttk.Combobox(parent, textvariable=self.var_prioridad, state="readonly", values=PRIORIDADES).grid(row=row, column=3, sticky="ew", pady=3, padx=(0, 12))
+
+        ttk.Label(parent, text="Color asignado").grid(row=row, column=4, sticky="w")
+        color_frame = ttk.Frame(parent)
+        color_frame.grid(row=row, column=5, sticky="w", pady=3)
+        self.lbl_color_asignado = ttk.Label(color_frame, textvariable=self.var_color)
+        self.lbl_color_asignado.pack(side="left")
+        ttk.Label(color_frame, text="  Vista color:").pack(side="left", padx=(8, 4))
+        self.color_preview = tk.Label(color_frame, text="      ", relief="solid", bd=1, bg=COLOR_MAP["Sin color"])
+        self.color_preview.pack(side="left")
 
         row += 1
-        ttk.Label(parent, text="Prioridad").grid(row=row, column=0, sticky="w")
-        ttk.Combobox(parent, textvariable=self.var_prioridad, state="readonly", values=PRIORIDADES).grid(row=row, column=1, sticky="ew", pady=3, padx=(0, 12))
-
-        ttk.Label(parent, text="Color asignado").grid(row=row, column=2, sticky="w")
-        self.lbl_color_asignado = ttk.Label(parent, textvariable=self.var_color)
-        self.lbl_color_asignado.grid(row=row, column=3, sticky="w", pady=3)
-
-        row += 1
-        ttk.Label(parent, text="Vista color").grid(row=row, column=0, sticky="w")
-        self.color_preview = tk.Label(parent, text="      ", relief="solid", bd=1, bg=COLOR_MAP["Sin color"])
-        self.color_preview.grid(row=row, column=1, sticky="w", pady=6)
-
-        ttk.Label(parent, text="Acciones rápidas").grid(row=row, column=2, sticky="w")
+        ttk.Label(parent, text="Acciones rápidas").grid(row=row, column=0, sticky="w", pady=(4, 0))
         quick = ttk.Frame(parent)
-        quick.grid(row=row, column=3, sticky="ew")
+        quick.grid(row=row, column=1, columnspan=5, sticky="ew", pady=(4, 0))
         ttk.Button(quick, text="Formatear SPL", command=self.format_spl).pack(side="left", padx=(0, 6))
         ttk.Button(quick, text="Copiar SPL", command=self.copy_spl).pack(side="left", padx=(0, 6))
         ttk.Button(quick, text="Snippet ESA", command=lambda: self.insert_snippet("ESA")).pack(side="left", padx=(0, 6))
@@ -316,7 +316,7 @@ class SearchManagerApp:
         row += 1
         ttk.Label(parent, text="SPL *").grid(row=row, column=0, sticky="nw", pady=(6, 0))
         spl_frame = ttk.Frame(parent)
-        spl_frame.grid(row=row, column=1, columnspan=3, sticky="nsew", pady=(6, 3))
+        spl_frame.grid(row=row, column=1, columnspan=5, sticky="nsew", pady=(6, 3))
         spl_frame.rowconfigure(1, weight=1)
         spl_frame.columnconfigure(0, weight=1)
 
@@ -358,27 +358,28 @@ class SearchManagerApp:
         row += 1
         ttk.Label(parent, text="Descripción").grid(row=row, column=0, sticky="nw")
         self.txt_descripcion = tk.Text(parent, height=7, wrap="word", font=("Segoe UI", 10))
-        self.txt_descripcion.grid(row=row, column=1, columnspan=3, sticky="nsew", pady=3)
+        self.txt_descripcion.grid(row=row, column=1, columnspan=5, sticky="nsew", pady=3)
 
         row += 1
         ttk.Label(parent, text="Observaciones").grid(row=row, column=0, sticky="nw")
         self.txt_observaciones = tk.Text(parent, height=4, wrap="word", font=("Segoe UI", 10))
-        self.txt_observaciones.grid(row=row, column=1, columnspan=3, sticky="nsew", pady=3)
+        self.txt_observaciones.grid(row=row, column=1, columnspan=5, sticky="nsew", pady=3)
 
         row += 1
         actions = ttk.Frame(parent)
-        actions.grid(row=row, column=0, columnspan=4, sticky="ew", pady=(10, 0))
+        actions.grid(row=row, column=0, columnspan=6, sticky="ew", pady=(10, 0))
         ttk.Button(actions, text="Nuevo", command=self.clear_form).pack(side="left", padx=(0, 6))
         ttk.Button(actions, text="Guardar", command=self.save_record).pack(side="left", padx=6)
         ttk.Button(actions, text="Duplicar", command=self.duplicate_record).pack(side="left", padx=6)
         ttk.Button(actions, text="Borrar", command=self.delete_record).pack(side="left", padx=6)
         ttk.Button(actions, text="Refrescar", command=self.refresh_tree).pack(side="left", padx=6)
 
-        parent.columnconfigure(1, weight=1)
-        parent.columnconfigure(3, weight=1)
-        parent.rowconfigure(5, weight=4)
-        parent.rowconfigure(6, weight=1)
-        parent.rowconfigure(7, weight=0)
+        parent.columnconfigure(1, weight=3)
+        parent.columnconfigure(3, weight=2)
+        parent.columnconfigure(5, weight=2)
+        parent.rowconfigure(4, weight=4)
+        parent.rowconfigure(5, weight=1)
+        parent.rowconfigure(6, weight=0)
         self.on_tecnologia_changed()
 
     def _configure_spl_tags(self):
