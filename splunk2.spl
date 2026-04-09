@@ -276,6 +276,9 @@ class SearchManagerApp:
             self.tree.tag_configure(color_name, background=bg)
 
     def autoajustar_columnas_biblioteca(self):
+        if not hasattr(self, "tree"):
+            return
+
         font_body = tkfont.nametofont("TkDefaultFont")
         try:
             font_head = tkfont.nametofont("TkHeadingFont")
