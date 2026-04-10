@@ -163,6 +163,9 @@ class SearchManagerApp:
         self.db = JSONDatabase()
         self.selected_id = None
         self._highlight_job = None
+        self.base_font_size = 9
+        self.ui_font_family = "Segoe UI"
+        self.code_font_family = "Consolas"
 
         self._setup_styles()
         self._build_variables()
@@ -187,17 +190,12 @@ class SearchManagerApp:
 
 
     def _setup_styles(self):
-        style = ttk.Style()
+        self.style = ttk.Style()
         try:
-            style.theme_use("clam")
+            self.style.theme_use("clam")
         except Exception:
             pass
-        style.configure("Treeview", font=("Segoe UI", 8), rowheight=22)
-        style.configure("Treeview.Heading", font=("Segoe UI", 8, "bold"))
-        style.configure("TLabel", font=("Segoe UI", 8))
-        style.configure("TButton", font=("Segoe UI", 8))
-        style.configure("TEntry", font=("Segoe UI", 8))
-        style.configure("TCombobox", font=("Segoe UI", 8))
+        self.apply_fonts()
 
     def _build_ui(self):
         self.root.columnconfigure(0, weight=1)
@@ -217,6 +215,57 @@ class SearchManagerApp:
         self._build_filters(left)
         self._build_table(center)
         self._build_editor(right)
+        self._bind_font_shortcuts()
+
+
+    def _bind_font_shortcuts(self):
+        targets = [self.root]
+        for widget_name in ("text_spl", "text_descripcion", "text_observaciones", "tree"):
+            widget = getattr(self, widget_name, None)
+            if widget is not None:
+                targets.append(widget)
+
+        sequences_plus = ("<Control-plus>", "<Control-equal>", "<Control-KP_Add>")
+        sequences_minus = ("<Control-minus>", "<Control-KP_Subtract>")
+
+        for target in targets:
+            for seq in sequences_plus:
+                target.bind(seq, self.aumentar_fuente, add="+")
+            for seq in sequences_minus:
+                target.bind(seq, self.disminuir_fuente, add="+")
+
+    def apply_fonts(self):
+        ui_size = max(self.base_font_size - 1, 7)
+        small_size = max(ui_size - 1, 7)
+
+        self.style.configure("Treeview", font=(self.ui_font_family, ui_size), rowheight=max(20, ui_size + 14))
+        self.style.configure("Treeview.Heading", font=(self.ui_font_family, ui_size, "bold"))
+        self.style.configure("TLabel", font=(self.ui_font_family, ui_size))
+        self.style.configure("TButton", font=(self.ui_font_family, ui_size))
+        self.style.configure("TEntry", font=(self.ui_font_family, ui_size))
+        self.style.configure("TCombobox", font=(self.ui_font_family, ui_size))
+
+        if hasattr(self, "text_spl"):
+            self.text_spl.configure(font=(self.code_font_family, self.base_font_size))
+        if hasattr(self, "text_descripcion"):
+            self.text_descripcion.configure(font=(self.ui_font_family, small_size))
+        if hasattr(self, "text_observaciones"):
+            self.text_observaciones.configure(font=(self.ui_font_family, small_size))
+
+        try:
+            self.autoajustar_columnas_biblioteca()
+        except Exception:
+            pass
+
+    def aumentar_fuente(self, event=None):
+        self.base_font_size = min(self.base_font_size + 1, 18)
+        self.apply_fonts()
+        return "break"
+
+    def disminuir_fuente(self, event=None):
+        self.base_font_size = max(self.base_font_size - 1, 7)
+        self.apply_fonts()
+        return "break"
 
     def _build_filters(self, parent):
         ttk.Label(parent, text="Filtros", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 10))
@@ -383,7 +432,7 @@ class SearchManagerApp:
             insertbackground="#ffffff",
             selectbackground="#264f78",
             relief="flat",
-            font=("Consolas", 9),
+            font=(self.code_font_family, self.base_font_size),
             padx=10,
             pady=10,
             tabs=(28,)
@@ -404,12 +453,12 @@ class SearchManagerApp:
 
         row += 1
         ttk.Label(parent, text="Descripción").grid(row=row, column=0, sticky="nw")
-        self.txt_descripcion = tk.Text(parent, height=7, wrap="word", font=("Segoe UI", 8))
+        self.txt_descripcion = tk.Text(parent, height=7, wrap="word", font=(self.ui_font_family, max(self.base_font_size - 2, 7)))
         self.txt_descripcion.grid(row=row, column=1, columnspan=5, sticky="nsew", pady=3)
 
         row += 1
         ttk.Label(parent, text="Observaciones").grid(row=row, column=0, sticky="nw")
-        self.txt_observaciones = tk.Text(parent, height=4, wrap="word", font=("Segoe UI", 8))
+        self.txt_observaciones = tk.Text(parent, height=4, wrap="word", font=(self.ui_font_family, max(self.base_font_size - 2, 7)))
         self.txt_observaciones.grid(row=row, column=1, columnspan=5, sticky="nsew", pady=3)
 
         row += 1
