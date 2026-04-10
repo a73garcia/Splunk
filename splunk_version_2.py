@@ -172,6 +172,7 @@ class SearchManagerApp:
         self._build_ui()
         self.refresh_tree()
         self.clear_form()
+        self.txt_spl.focus_set()
 
     def _build_variables(self):
         self.var_nombre = tk.StringVar()
@@ -215,24 +216,6 @@ class SearchManagerApp:
         self._build_filters(left)
         self._build_table(center)
         self._build_editor(right)
-        self._bind_font_shortcuts()
-
-
-    def _bind_font_shortcuts(self):
-        targets = [self.root]
-        for widget_name in ("text_spl", "text_descripcion", "text_observaciones", "tree"):
-            widget = getattr(self, widget_name, None)
-            if widget is not None:
-                targets.append(widget)
-
-        sequences_plus = ("<Control-plus>", "<Control-equal>", "<Control-KP_Add>")
-        sequences_minus = ("<Control-minus>", "<Control-KP_Subtract>")
-
-        for target in targets:
-            for seq in sequences_plus:
-                target.bind(seq, self.aumentar_fuente, add="+")
-            for seq in sequences_minus:
-                target.bind(seq, self.disminuir_fuente, add="+")
 
     def apply_fonts(self):
         ui_size = max(self.base_font_size - 1, 7)
@@ -245,12 +228,12 @@ class SearchManagerApp:
         self.style.configure("TEntry", font=(self.ui_font_family, ui_size))
         self.style.configure("TCombobox", font=(self.ui_font_family, ui_size))
 
-        if hasattr(self, "text_spl"):
-            self.text_spl.configure(font=(self.code_font_family, self.base_font_size))
-        if hasattr(self, "text_descripcion"):
-            self.text_descripcion.configure(font=(self.ui_font_family, small_size))
-        if hasattr(self, "text_observaciones"):
-            self.text_observaciones.configure(font=(self.ui_font_family, small_size))
+        if hasattr(self, "txt_spl"):
+            self.txt_spl.configure(font=(self.code_font_family, self.base_font_size))
+        if hasattr(self, "txt_descripcion"):
+            self.txt_descripcion.configure(font=(self.ui_font_family, small_size))
+        if hasattr(self, "txt_observaciones"):
+            self.txt_observaciones.configure(font=(self.ui_font_family, small_size))
 
         try:
             self.autoajustar_columnas_biblioteca()
@@ -266,6 +249,16 @@ class SearchManagerApp:
         self.base_font_size = max(self.base_font_size - 1, 7)
         self.apply_fonts()
         return "break"
+
+    def _bind_editor_font_shortcuts(self):
+        sequences_plus = ("<Control-plus>", "<Control-equal>", "<Control-KP_Add>")
+        sequences_minus = ("<Control-minus>", "<Control-KP_Subtract>")
+
+        for seq in sequences_plus:
+            self.txt_spl.bind(seq, self.aumentar_fuente, add="+")
+        for seq in sequences_minus:
+            self.txt_spl.bind(seq, self.disminuir_fuente, add="+")
+
 
     def _build_filters(self, parent):
         ttk.Label(parent, text="Filtros", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 10))
@@ -450,6 +443,7 @@ class SearchManagerApp:
         self.txt_spl.bind("<<Paste>>", self.schedule_spl_highlight)
         self.txt_spl.bind("<ButtonRelease-1>", self.update_cursor_status)
         self.txt_spl.bind("<KeyRelease>", self.on_spl_keyrelease, add="+")
+        self._bind_editor_font_shortcuts()
 
         row += 1
         ttk.Label(parent, text="Descripción").grid(row=row, column=0, sticky="nw")
