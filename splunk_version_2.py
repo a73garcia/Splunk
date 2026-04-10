@@ -158,12 +158,13 @@ class JSONDatabase:
 class SearchManagerApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Gestor de búsquedas Splunk PRO")
+        self.root.title("Gestor de búsquedas Splunk PRO v10")
         self.root.geometry("1540x900")
         self.db = JSONDatabase()
         self.selected_id = None
         self._highlight_job = None
         self.base_font_size = 9
+        self.editor_font_size = 9
         self.ui_font_family = "Segoe UI"
         self.code_font_family = "Consolas"
 
@@ -221,6 +222,7 @@ class SearchManagerApp:
         ui_size = max(self.base_font_size - 1, 7)
         small_size = max(ui_size - 1, 7)
 
+        # La UI general mantiene tamaño fijo; el zoom solo actúa sobre el editor SPL.
         self.style.configure("Treeview", font=(self.ui_font_family, ui_size), rowheight=max(20, ui_size + 14))
         self.style.configure("Treeview.Heading", font=(self.ui_font_family, ui_size, "bold"))
         self.style.configure("TLabel", font=(self.ui_font_family, ui_size))
@@ -229,7 +231,7 @@ class SearchManagerApp:
         self.style.configure("TCombobox", font=(self.ui_font_family, ui_size))
 
         if hasattr(self, "txt_spl"):
-            self.txt_spl.configure(font=(self.code_font_family, self.base_font_size))
+            self.txt_spl.configure(font=(self.code_font_family, self.editor_font_size))
         if hasattr(self, "txt_descripcion"):
             self.txt_descripcion.configure(font=(self.ui_font_family, small_size))
         if hasattr(self, "txt_observaciones"):
@@ -241,13 +243,17 @@ class SearchManagerApp:
             pass
 
     def aumentar_fuente(self, event=None):
-        self.base_font_size = min(self.base_font_size + 1, 18)
-        self.apply_fonts()
+        self.editor_font_size = min(self.editor_font_size + 1, 18)
+        if hasattr(self, "txt_spl"):
+            self.txt_spl.configure(font=(self.code_font_family, self.editor_font_size))
+            self.highlight_spl()
         return "break"
 
     def disminuir_fuente(self, event=None):
-        self.base_font_size = max(self.base_font_size - 1, 7)
-        self.apply_fonts()
+        self.editor_font_size = max(self.editor_font_size - 1, 7)
+        if hasattr(self, "txt_spl"):
+            self.txt_spl.configure(font=(self.code_font_family, self.editor_font_size))
+            self.highlight_spl()
         return "break"
 
     def _bind_editor_font_shortcuts(self):
@@ -425,7 +431,7 @@ class SearchManagerApp:
             insertbackground="#ffffff",
             selectbackground="#264f78",
             relief="flat",
-            font=(self.code_font_family, self.base_font_size),
+            font=(self.code_font_family, self.editor_font_size),
             padx=10,
             pady=10,
             tabs=(28,)
