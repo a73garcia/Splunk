@@ -4,6 +4,7 @@ import re
 from copy import deepcopy
 from datetime import datetime
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import ttk, messagebox, filedialog
 
 DATA_FILE = "splunk_busquedas.json"
@@ -15,6 +16,16 @@ COLOR_MAP = {
     "Azul": "#cfe2ff",
     "Gris": "#e2e3e5",
     "Sin color": "#ffffff",
+}
+
+TECH_COLOR_MAP = {
+    "Cisco ESA": "Rojo",
+    "Proofpoint": "Naranja",
+    "M365": "Azul",
+    "Proxy": "Gris",
+    "Firewall": "Verde",
+    "Splunk": "Sin color",
+    "OTRO": "Sin color",
 }
 
 PRIORIDADES = ["Crítica", "Alta", "Media", "Baja"]
@@ -153,6 +164,7 @@ class SearchManagerApp:
         self.selected_id = None
         self._highlight_job = None
 
+        self._setup_styles()
         self._build_variables()
         self._build_ui()
         self.refresh_tree()
@@ -173,6 +185,20 @@ class SearchManagerApp:
         self.var_filter_entorno = tk.StringVar(value="Todos")
         self.var_filter_prioridad = tk.StringVar(value="Todos")
 
+
+    def _setup_styles(self):
+        style = ttk.Style()
+        try:
+            style.theme_use("clam")
+        except Exception:
+            pass
+        style.configure("Treeview", font=("Segoe UI", 8), rowheight=22)
+        style.configure("Treeview.Heading", font=("Segoe UI", 8, "bold"))
+        style.configure("TLabel", font=("Segoe UI", 8))
+        style.configure("TButton", font=("Segoe UI", 8))
+        style.configure("TEntry", font=("Segoe UI", 8))
+        style.configure("TCombobox", font=("Segoe UI", 8))
+
     def _build_ui(self):
         self.root.columnconfigure(0, weight=1)
         self.root.rowconfigure(0, weight=1)
@@ -185,15 +211,15 @@ class SearchManagerApp:
         right = ttk.Frame(main, padding=8)
 
         main.add(left, weight=1)
-        main.add(center, weight=2)
-        main.add(right, weight=3)
+        main.add(center, weight=8)
+        main.add(right, weight=12)
 
         self._build_filters(left)
         self._build_table(center)
         self._build_editor(right)
 
     def _build_filters(self, parent):
-        ttk.Label(parent, text="Filtros", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 10))
+        ttk.Label(parent, text="Filtros", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, sticky="w", pady=(0, 10))
 
         ttk.Label(parent, text="Texto").grid(row=1, column=0, sticky="w")
         ent = ttk.Entry(parent, textvariable=self.var_filter_text)
@@ -234,24 +260,21 @@ class SearchManagerApp:
         self.reload_category_filter()
 
     def _build_table(self, parent):
-        ttk.Label(parent, text="Biblioteca de búsquedas", font=("Segoe UI", 12, "bold")).pack(anchor="w", pady=(0, 10))
+        ttk.Label(parent, text="Biblioteca de búsquedas", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 10))
 
-        columns = ("id", "nombre", "categoria", "tecnologia", "entorno", "prioridad", "color", "fecha")
+        columns = ("id", "nombre", "categoria", "tecnologia", "fecha")
         self.tree = ttk.Treeview(parent, columns=columns, show="headings", height=28)
         headers = {
             "id": "ID", "nombre": "Nombre", "categoria": "Categoría", "tecnologia": "Tecnología",
-            "entorno": "Entorno", "prioridad": "Prioridad", "color": "Color", "fecha": "Última modificación"
+            "fecha": "Última modificación"
         }
         for col, title in headers.items():
             self.tree.heading(col, text=title)
 
         self.tree.column("id", width=45, anchor="center")
-        self.tree.column("nombre", width=260)
-        self.tree.column("categoria", width=120)
-        self.tree.column("tecnologia", width=120)
-        self.tree.column("entorno", width=80, anchor="center")
-        self.tree.column("prioridad", width=80, anchor="center")
-        self.tree.column("color", width=100, anchor="center")
+        self.tree.column("nombre", width=300)
+        self.tree.column("categoria", width=140)
+        self.tree.column("tecnologia", width=130)
         self.tree.column("fecha", width=155, anchor="center")
 
         scrollbar_y = ttk.Scrollbar(parent, orient=tk.VERTICAL, command=self.tree.yview)
@@ -266,55 +289,87 @@ class SearchManagerApp:
         for color_name, bg in COLOR_MAP.items():
             self.tree.tag_configure(color_name, background=bg)
 
+    def autoajustar_columnas_biblioteca(self):
+        if not hasattr(self, "tree"):
+            return
+
+        tree = self.tree
+        font_body = tkfont.nametofont("TkDefaultFont")
+        try:
+            font_head = tkfont.nametofont("TkHeadingFont")
+        except tk.TclError:
+            font_head = font_body
+
+        limites = {
+            "id": 55,
+            "nombre": 300,
+            "categoria": 150,
+            "tecnologia": 160,
+            "fecha": 165,
+        }
+
+        for col in tree["columns"]:
+            heading_text = tree.heading(col, "text") or col
+            ancho = font_head.measure(str(heading_text))
+
+            for item in tree.get_children():
+                valor = tree.set(item, col)
+                ancho = max(ancho, font_body.measure(str(valor)))
+
+            ancho = min(ancho + 24, limites.get(col, 180))
+            tree.column(col, width=ancho)
+
     def _build_editor(self, parent):
-        ttk.Label(parent, text="Detalle / edición", font=("Segoe UI", 12, "bold")).grid(row=0, column=0, columnspan=4, sticky="w", pady=(0, 10))
+        ttk.Label(parent, text="Detalle / edición", font=("Segoe UI", 10, "bold")).grid(row=0, column=0, columnspan=6, sticky="w", pady=(0, 10))
 
         row = 1
         ttk.Label(parent, text="Nombre *").grid(row=row, column=0, sticky="w")
         ttk.Entry(parent, textvariable=self.var_nombre).grid(row=row, column=1, sticky="ew", pady=3, padx=(0, 12))
 
         ttk.Label(parent, text="Categoría").grid(row=row, column=2, sticky="w")
-        ttk.Entry(parent, textvariable=self.var_categoria).grid(row=row, column=3, sticky="ew", pady=3)
+        ttk.Entry(parent, textvariable=self.var_categoria).grid(row=row, column=3, sticky="ew", pady=3, padx=(0, 12))
+
+        ttk.Label(parent, text="Tecnología").grid(row=row, column=4, sticky="w")
+        cmb_tecnologia = ttk.Combobox(parent, textvariable=self.var_tecnologia, state="readonly", values=TECNOLOGIAS)
+        cmb_tecnologia.grid(row=row, column=5, sticky="ew", pady=3)
+        cmb_tecnologia.bind("<<ComboboxSelected>>", lambda e: self.on_tecnologia_changed())
 
         row += 1
         ttk.Label(parent, text="Entorno").grid(row=row, column=0, sticky="w")
         ttk.Combobox(parent, textvariable=self.var_entorno, state="readonly", values=ENTORNOS).grid(row=row, column=1, sticky="ew", pady=3, padx=(0, 12))
 
-        ttk.Label(parent, text="Tecnología").grid(row=row, column=2, sticky="w")
-        ttk.Combobox(parent, textvariable=self.var_tecnologia, state="readonly", values=TECNOLOGIAS).grid(row=row, column=3, sticky="ew", pady=3)
+        ttk.Label(parent, text="Prioridad").grid(row=row, column=2, sticky="w")
+        ttk.Combobox(parent, textvariable=self.var_prioridad, state="readonly", values=PRIORIDADES).grid(row=row, column=3, sticky="ew", pady=3, padx=(0, 12))
+
+        ttk.Label(parent, text="Color asignado").grid(row=row, column=4, sticky="w")
+        color_frame = ttk.Frame(parent)
+        color_frame.grid(row=row, column=5, sticky="w", pady=3)
+        self.lbl_color_asignado = ttk.Label(color_frame, textvariable=self.var_color)
+        self.lbl_color_asignado.pack(side="left")
+        ttk.Label(color_frame, text="  Vista color:").pack(side="left", padx=(8, 4))
+        self.color_preview = tk.Label(color_frame, text="      ", relief="solid", bd=1, bg=COLOR_MAP["Sin color"])
+        self.color_preview.pack(side="left")
 
         row += 1
-        ttk.Label(parent, text="Prioridad").grid(row=row, column=0, sticky="w")
-        ttk.Combobox(parent, textvariable=self.var_prioridad, state="readonly", values=PRIORIDADES).grid(row=row, column=1, sticky="ew", pady=3, padx=(0, 12))
-
-        ttk.Label(parent, text="Color").grid(row=row, column=2, sticky="w")
-        color_combo = ttk.Combobox(parent, textvariable=self.var_color, state="readonly", values=COLORES)
-        color_combo.grid(row=row, column=3, sticky="ew", pady=3)
-        color_combo.bind("<<ComboboxSelected>>", lambda e: self.update_color_preview())
-
-        row += 1
-        ttk.Label(parent, text="Vista color").grid(row=row, column=0, sticky="w")
-        self.color_preview = tk.Label(parent, text="      ", relief="solid", bd=1, bg=COLOR_MAP["Sin color"])
-        self.color_preview.grid(row=row, column=1, sticky="w", pady=6)
-
-        ttk.Label(parent, text="Acciones rápidas").grid(row=row, column=2, sticky="w")
+        ttk.Label(parent, text="Acciones rápidas").grid(row=row, column=0, sticky="w", pady=(4, 0))
         quick = ttk.Frame(parent)
-        quick.grid(row=row, column=3, sticky="ew")
+        quick.grid(row=row, column=1, columnspan=5, sticky="ew", pady=(4, 0))
         ttk.Button(quick, text="Formatear SPL", command=self.format_spl).pack(side="left", padx=(0, 6))
-        ttk.Button(quick, text="Copiar SPL", command=self.copy_spl).pack(side="left", padx=(0, 6))
+        ttk.Button(quick, text="Copiar todo", command=self.copy_spl).pack(side="left", padx=(0, 6))
+        ttk.Button(quick, text="Copiar selección", command=self.copy_selected_spl).pack(side="left", padx=(0, 6))
         ttk.Button(quick, text="Snippet ESA", command=lambda: self.insert_snippet("ESA")).pack(side="left", padx=(0, 6))
         ttk.Button(quick, text="Snippet M365", command=lambda: self.insert_snippet("M365")).pack(side="left")
 
         row += 1
         ttk.Label(parent, text="SPL *").grid(row=row, column=0, sticky="nw", pady=(6, 0))
         spl_frame = ttk.Frame(parent)
-        spl_frame.grid(row=row, column=1, columnspan=3, sticky="nsew", pady=(6, 3))
+        spl_frame.grid(row=row, column=1, columnspan=5, sticky="nsew", pady=(6, 3))
         spl_frame.rowconfigure(1, weight=1)
         spl_frame.columnconfigure(0, weight=1)
 
         toolbar = ttk.Frame(spl_frame)
         toolbar.grid(row=0, column=0, sticky="ew", pady=(0, 4))
-        ttk.Label(toolbar, text="Editor SPL con colores", font=("Segoe UI", 10, "bold")).pack(side="left")
+        ttk.Label(toolbar, text="Editor SPL con colores", font=("Segoe UI", 8, "bold")).pack(side="left")
         self.lbl_status = ttk.Label(toolbar, text="", foreground="#666666")
         self.lbl_status.pack(side="right")
 
@@ -328,7 +383,7 @@ class SearchManagerApp:
             insertbackground="#ffffff",
             selectbackground="#264f78",
             relief="flat",
-            font=("Consolas", 11),
+            font=("Consolas", 9),
             padx=10,
             pady=10,
             tabs=(28,)
@@ -349,29 +404,32 @@ class SearchManagerApp:
 
         row += 1
         ttk.Label(parent, text="Descripción").grid(row=row, column=0, sticky="nw")
-        self.txt_descripcion = tk.Text(parent, height=7, wrap="word", font=("Segoe UI", 10))
-        self.txt_descripcion.grid(row=row, column=1, columnspan=3, sticky="nsew", pady=3)
+        self.txt_descripcion = tk.Text(parent, height=7, wrap="word", font=("Segoe UI", 8))
+        self.txt_descripcion.grid(row=row, column=1, columnspan=5, sticky="nsew", pady=3)
 
         row += 1
         ttk.Label(parent, text="Observaciones").grid(row=row, column=0, sticky="nw")
-        self.txt_observaciones = tk.Text(parent, height=7, wrap="word", font=("Segoe UI", 10))
-        self.txt_observaciones.grid(row=row, column=1, columnspan=3, sticky="nsew", pady=3)
+        self.txt_observaciones = tk.Text(parent, height=4, wrap="word", font=("Segoe UI", 8))
+        self.txt_observaciones.grid(row=row, column=1, columnspan=5, sticky="nsew", pady=3)
 
         row += 1
         actions = ttk.Frame(parent)
-        actions.grid(row=row, column=0, columnspan=4, sticky="ew", pady=(10, 0))
+        actions.grid(row=row, column=0, columnspan=6, sticky="ew", pady=(10, 0))
         ttk.Button(actions, text="Nuevo", command=self.clear_form).pack(side="left", padx=(0, 6))
         ttk.Button(actions, text="Guardar", command=self.save_record).pack(side="left", padx=6)
         ttk.Button(actions, text="Duplicar", command=self.duplicate_record).pack(side="left", padx=6)
         ttk.Button(actions, text="Borrar", command=self.delete_record).pack(side="left", padx=6)
+        ttk.Button(actions, text="Copiar todo", command=self.copy_spl).pack(side="left", padx=6)
+        ttk.Button(actions, text="Copiar selección", command=self.copy_selected_spl).pack(side="left", padx=6)
         ttk.Button(actions, text="Refrescar", command=self.refresh_tree).pack(side="left", padx=6)
 
-        parent.columnconfigure(1, weight=1)
-        parent.columnconfigure(3, weight=1)
-        parent.rowconfigure(5, weight=3)
-        parent.rowconfigure(6, weight=1)
-        parent.rowconfigure(7, weight=1)
-        self.update_color_preview()
+        parent.columnconfigure(1, weight=3)
+        parent.columnconfigure(3, weight=2)
+        parent.columnconfigure(5, weight=2)
+        parent.rowconfigure(4, weight=4)
+        parent.rowconfigure(5, weight=1)
+        parent.rowconfigure(6, weight=0)
+        self.on_tecnologia_changed()
 
     def _configure_spl_tags(self):
         self.txt_spl.tag_configure("keyword", foreground="#569CD6")
@@ -382,6 +440,11 @@ class SearchManagerApp:
         self.txt_spl.tag_configure("operator", foreground="#D4D4D4")
         self.txt_spl.tag_configure("pipe", foreground="#C586C0")
         self.txt_spl.tag_configure("paren", foreground="#FFD700")
+
+    def on_tecnologia_changed(self):
+        tecnologia = self.var_tecnologia.get().strip() or "OTRO"
+        self.var_color.set(TECH_COLOR_MAP.get(tecnologia, "Sin color"))
+        self.update_color_preview()
 
     def update_color_preview(self):
         self.color_preview.configure(bg=COLOR_MAP.get(self.var_color.get(), "#ffffff"))
@@ -417,7 +480,7 @@ class SearchManagerApp:
                 iid=str(row.get("id")),
                 values=(
                     row.get("id"), row.get("nombre", ""), row.get("categoria", ""), row.get("tecnologia", ""),
-                    row.get("entorno", ""), row.get("prioridad", ""), row.get("color", ""), row.get("fecha_modificacion", "")
+                    row.get("fecha_modificacion", "")
                 ),
                 tags=(tag,)
             )
@@ -444,7 +507,7 @@ class SearchManagerApp:
         self.var_entorno.set(row.get("entorno", "PROD"))
         self.var_tecnologia.set(row.get("tecnologia", "Splunk"))
         self.var_prioridad.set(row.get("prioridad", "Media"))
-        self.var_color.set(row.get("color", "Sin color"))
+        self.var_color.set(TECH_COLOR_MAP.get(self.var_tecnologia.get(), row.get("color", "Sin color")))
 
         self.txt_spl.delete("1.0", tk.END)
         self.txt_spl.insert("1.0", row.get("spl", ""))
@@ -452,7 +515,7 @@ class SearchManagerApp:
         self.txt_descripcion.insert("1.0", row.get("descripcion", ""))
         self.txt_observaciones.delete("1.0", tk.END)
         self.txt_observaciones.insert("1.0", row.get("observaciones", ""))
-        self.update_color_preview()
+        self.on_tecnologia_changed()
         self.highlight_spl()
 
     def get_form_data(self):
@@ -462,7 +525,7 @@ class SearchManagerApp:
             "entorno": self.var_entorno.get().strip(),
             "tecnologia": self.var_tecnologia.get().strip(),
             "prioridad": self.var_prioridad.get().strip(),
-            "color": self.var_color.get().strip(),
+            "color": TECH_COLOR_MAP.get(self.var_tecnologia.get().strip(), "Sin color"),
             "spl": self.txt_spl.get("1.0", tk.END).strip(),
             "descripcion": self.txt_descripcion.get("1.0", tk.END).strip(),
             "observaciones": self.txt_observaciones.get("1.0", tk.END).strip(),
@@ -502,12 +565,12 @@ class SearchManagerApp:
         self.var_entorno.set("PROD")
         self.var_tecnologia.set("Splunk")
         self.var_prioridad.set("Media")
-        self.var_color.set("Sin color")
+        self.var_color.set(TECH_COLOR_MAP.get("Splunk", "Sin color"))
         self.txt_spl.delete("1.0", tk.END)
         self.txt_descripcion.delete("1.0", tk.END)
         self.txt_observaciones.delete("1.0", tk.END)
         self.tree.selection_remove(self.tree.selection())
-        self.update_color_preview()
+        self.on_tecnologia_changed()
         self.highlight_spl()
 
     def duplicate_record(self):
@@ -532,15 +595,30 @@ class SearchManagerApp:
         self.refresh_tree()
         messagebox.showinfo("OK", "Registro eliminado.")
 
+    def _copy_to_clipboard(self, content, success_message):
+        self.root.clipboard_clear()
+        self.root.clipboard_append(content)
+        self.root.update()
+        messagebox.showinfo("OK", success_message)
+
     def copy_spl(self):
         spl = self.txt_spl.get("1.0", tk.END).strip()
         if not spl:
             messagebox.showwarning("Copiar", "No hay SPL para copiar.")
             return
-        self.root.clipboard_clear()
-        self.root.clipboard_append(spl)
-        self.root.update()
-        messagebox.showinfo("OK", "SPL copiado al portapapeles.")
+        self._copy_to_clipboard(spl, "Todo el SPL se ha copiado al portapapeles.")
+
+    def copy_selected_spl(self):
+        try:
+            selected_text = self.txt_spl.get(tk.SEL_FIRST, tk.SEL_LAST).strip()
+        except tk.TclError:
+            selected_text = ""
+
+        if not selected_text:
+            messagebox.showwarning("Copiar selección", "No hay texto seleccionado en el editor SPL.")
+            return
+
+        self._copy_to_clipboard(selected_text, "La selección del SPL se ha copiado al portapapeles.")
 
     def format_spl(self):
         text = self.txt_spl.get("1.0", tk.END).strip()
